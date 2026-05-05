@@ -5,6 +5,7 @@ import {
   useIsSpeaking,
   useLocalParticipant,
   useParticipants,
+  useConnectionQuality,
 } from '@livekit/components-react';
 import { Mic, MicOff, PhoneOff, Headphones } from 'lucide-react';
 
@@ -28,17 +29,31 @@ function getInitials(value) {
 function ParticipantRow({ participant }) {
   const isSpeaking = useIsSpeaking(participant);
   const isMuted = !participant.isMicrophoneEnabled;
+  const quality = useConnectionQuality(participant);
   const displayName = getParticipantName(participant);
+
+  let qualityColor = 'bg-red-500'; // Lost/Unknown
+  if (quality === 'excellent' || quality === 'good') {
+    qualityColor = 'bg-green-500';
+  } else if (quality === 'poor') {
+    qualityColor = 'bg-yellow-500';
+  }
 
   return (
     <div className="bg-[#0f172a] rounded-xl p-3 flex items-center justify-between shadow-sm">
       <div className="flex items-center gap-3">
-        <div
-          className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
-            isSpeaking ? 'ring-2 ring-green-500 bg-slate-700' : 'bg-slate-700'
-          }`}
-        >
-          {getInitials(displayName)}
+        <div className="relative">
+          <div
+            className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
+              isSpeaking ? 'ring-2 ring-green-500 bg-slate-700' : 'bg-slate-700'
+            }`}
+          >
+            {getInitials(displayName)}
+          </div>
+          <span 
+            className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#0f172a] ${qualityColor}`}
+            title={`Calidad de conexión: ${quality}`}
+          />
         </div>
         <span className="font-semibold">{displayName}</span>
       </div>
