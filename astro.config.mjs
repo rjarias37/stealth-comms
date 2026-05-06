@@ -8,13 +8,12 @@ import AstroPWA from '@vite-pwa/astro';
 
 // https://astro.build/config
 export default defineConfig({
-  output: 'hybrid',
-  adapter: vercel(),
+  output: 'static', // 🛡️ El nuevo estándar para arquitectura híbrida en Astro 6
+  adapter: vercel(), // 🛡️ functionPerRoute ya no es necesario, es automático
   integrations: [
     react(),
     AstroPWA({
       registerType: 'autoUpdate',
-      // 🟢 Aquí está el bloque workbox correctamente ADENTRO del plugin PWA
       workbox: {
         navigateFallback: '/',
         globPatterns: ['**/*.{css,js,html,svg,png,ico,txt}']
@@ -49,6 +48,9 @@ export default defineConfig({
     }),
   ],
   vite: {
-    plugins: [tailwindcss()]
+    plugins: [tailwindcss()],
+    build: {
+      emptyOutDir: false // 🛡️ Protege los binarios durante la compilación en Vercel
+    }
   }
 });
