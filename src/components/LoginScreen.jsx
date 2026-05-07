@@ -4,9 +4,9 @@ export default function LoginScreen({
   onConnect,
   isLoading = false,
   errorMessage = '',
+  activeCanal = 'ALFA',
 }) {
   const [nickname, setNickname] = useState('');
-  const [roomCode, setRoomCode] = useState('');
   const [deferredPrompt, setDeferredPrompt] = useState(null);
 
   useEffect(() => {
@@ -30,17 +30,10 @@ export default function LoginScreen({
 
   const handleConnect = (e) => {
     e.preventDefault();
-    if (isLoading) {
-      return;
-    }
+    if (isLoading) return;
     const cleanedNickname = nickname.trim();
-    const cleanedRoomCode = roomCode.trim();
-
-    if (cleanedNickname.length > 0 && cleanedRoomCode.length > 0) {
-      onConnect({
-        nickname: cleanedNickname,
-        room: cleanedRoomCode,
-      });
+    if (cleanedNickname.length > 0) {
+      onConnect({ nickname: cleanedNickname });
     }
   };
 
@@ -76,15 +69,14 @@ export default function LoginScreen({
             required
           />
 
-          <input
-            type="text"
-            placeholder="Ingresa Codigo de Sala"
-            value={roomCode}
-            onChange={(e) => setRoomCode(e.target.value)}
-            disabled={isLoading}
-            className="w-full bg-[#e2e8f0] text-[#0f172a] placeholder-gray-500 font-bold text-center rounded-full py-4 px-6 focus:outline-none focus:ring-4 focus:ring-accent transition-all"
-            required
-          />
+          {/* Canal activo — sólo lectura, se cambia desde el selector del header */}
+          <div className="flex items-center justify-center gap-2 text-xs font-mono tracking-widest text-[#00ffcc] opacity-80">
+            <span className="animate-pulse">📡</span>
+            <span>CONECTANDO A CANAL:</span>
+            <span className="font-bold text-white border border-[#00ffcc]/40 rounded px-2 py-0.5 bg-[#00ffcc]/10">
+              {activeCanal}
+            </span>
+          </div>
 
           <button
             type="submit"
