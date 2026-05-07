@@ -1,6 +1,64 @@
-import React, { useState } from 'react';
-import LoginScreen from './LoginScreen.jsx'; 
+import React, { useEffect, useRef, useState } from 'react';
+import LoginScreen from './LoginScreen.jsx';
 import CommsRoom from './CommsRoom.jsx';
+
+// ─── Wake Lock Hook ──────────────────────────────────────────────────────────
+// Prevents the device screen from sleeping while an active session is running.
+function useWakeLock(isActive) {
+  const wakeLockRef = useRef(null);
+  const [locked, setLocked] = useState(false);
+
+  const requestWakeLock = async () => {
+    if (!('wakeLock' in navigator)) {
+      console.warn('⚠️ Wake Lock no soportado en este navegador.');
+      return;
+    }
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen');
+      setLocked(true);
+      console.log('🔒 Escudo de pantalla ACTIVO: Bloqueo de suspensión habilitado.');
+    } catch (err) {
+      console.error('❌ Error al activar el bloqueo de suspensión:', err.message);
+    }
+  };
+
+  const releaseWakeLock = async () => {
+    if (wakeLockRef.current !== null) {
+      try {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+        setLocked(false);
+        console.log('🔓 Escudo de pantalla INACTIVO: Bloqueo liberado.');
+      } catch (err) {
+        console.error('❌ Error al liberar el bloqueo:', err.message);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (isActive) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+
+    const handleVisibilityChange = async () => {
+      if (isActive && wakeLockRef.current !== null && document.visibilityState === 'visible') {
+        await requestWakeLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [isActive]);
+
+  return locked;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function StealthApp() {
   const [nickname, setNickname] = useState(null);
@@ -8,6 +66,9 @@ export default function StealthApp() {
   const [token, setToken] = useState(null);
   const [isLoadingToken, setIsLoadingToken] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Wake Lock: mantiene la pantalla activa mientras haya una sesión con token
+  const isScreenLocked = useWakeLock(token !== null);
 
   const handleConnect = async ({ nickname: name, room }) => {
     const cleanedName = typeof name === 'string' ? name.trim() : '';
