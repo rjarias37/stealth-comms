@@ -216,7 +216,6 @@ function VoiceProcessorPanel({
   errorMessage,
   isChangingVoice,
   isConfigured,
-  isConnected,
   isLocalProcessing,
   isMicEnabled,
   isNativeRobotEnabled,
@@ -229,15 +228,33 @@ function VoiceProcessorPanel({
   onTrebleGainChange,
   onVoiceChange,
   trebleGain,
+  voicemodStatus,
   voices,
 }) {
-  const voicemodStatus = isChangingVoice
+  const isVoicemodDetected = voicemodStatus === 'connected';
+  const isVoicemodChecking = voicemodStatus === 'connecting';
+  const voicemodStatusText = isChangingVoice
     ? 'CAMBIANDO VOZ'
-    : isConnected
+    : isVoicemodDetected
       ? 'VOICEMOD CONECTADO'
       : isConfigured
-        ? 'VOICEMOD LISTO'
+        ? 'SERVICIO LOCAL NO DETECTADO'
         : 'CLIENT KEY FALTANTE';
+  const voicemodBadgeText = isVoicemodDetected
+    ? 'Voicemod Detectado'
+    : isVoicemodChecking
+      ? 'Buscando Voicemod...'
+      : 'Voicemod Offline - Abre la app de escritorio';
+  const voicemodBadgeClass = isVoicemodDetected
+    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+    : isVoicemodChecking
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+      : 'border-red-500/40 bg-red-500/10 text-red-200';
+  const voicemodDotClass = isVoicemodDetected
+    ? 'bg-emerald-400 animate-pulse'
+    : isVoicemodChecking
+      ? 'bg-amber-300 animate-pulse'
+      : 'bg-red-500';
   const localStatus = isPublishing
     ? 'PUBLICANDO'
     : isMicEnabled
@@ -326,7 +343,7 @@ function VoiceProcessorPanel({
           <span
             style={{
               ...s.voiceSwitch,
-              ...(isConnected ? s.voiceSwitchActive : {}),
+              ...(isVoicemodDetected ? s.voiceSwitchActive : {}),
               cursor: 'default',
             }}
           >
@@ -336,9 +353,16 @@ function VoiceProcessorPanel({
         <p className="mb-3 rounded border border-amber-900/40 bg-black/25 px-2 py-1.5 text-[0.68rem] leading-4 text-amber-100/80">
           Abre Voicemod en tu PC para usar estos filtros
         </p>
+        <div
+          className={`mb-3 inline-flex max-w-full items-center gap-2 self-start rounded-full border px-2.5 py-1 font-mono text-[0.56rem] font-bold uppercase tracking-[0.09em] ${voicemodBadgeClass}`}
+          aria-live="polite"
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${voicemodDotClass}`} />
+          <span className="truncate">{voicemodBadgeText}</span>
+        </div>
         <div className="mb-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-slate-500">
-            {voicemodStatus}
+            {voicemodStatusText}
           </span>
           <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-slate-500">
             CONTROL REMOTO
@@ -347,7 +371,7 @@ function VoiceProcessorPanel({
         <div style={s.voicePresetGrid}>
           {voices.map((voice) => {
             const active = currentVoiceId === voice.id;
-            const disabled = !isConfigured || isChangingVoice || voice.enabled === false;
+            const disabled = !isConfigured || !isVoicemodDetected || isChangingVoice || voice.enabled === false;
 
             return (
               <button
@@ -401,7 +425,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     eqGainRange,
     error: processorError,
     isChangingVoice,
-    isConnected: isVoicemodConnected,
     isNativeRobotEnabled,
     isProcessing: isLocalProcessing,
     isVoicemodConfigured,
@@ -416,6 +439,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     setNativeRobotEnabled,
     setTrebleGain,
     trebleGain,
+    voicemodStatus,
     voices: voicemodVoices,
   } = useVoiceProcessor();
 
@@ -496,7 +520,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   }, [localParticipant, release, requestMicrophoneStream]);
 
   useEffect(() => {
-    if (!showVoicePanel || !isVoicemodConfigured) return undefined;
+    if (!showVoicePanel || !isVoicemodConfigured || voicemodStatus !== 'connected') return undefined;
 
     let cancelled = false;
     setVoiceError('');
@@ -507,7 +531,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     return () => {
       cancelled = true;
     };
-  }, [isVoicemodConfigured, refreshVoicemodVoices, showVoicePanel]);
+  }, [isVoicemodConfigured, refreshVoicemodVoices, showVoicePanel, voicemodStatus]);
 
   const setProcessedMicActive = useCallback(
     async (enabled) => {
@@ -673,7 +697,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             errorMessage={voiceErrorMessage}
             isChangingVoice={isChangingVoice}
             isConfigured={isVoicemodConfigured}
-            isConnected={isVoicemodConnected}
             isLocalProcessing={isLocalProcessing}
             isMicEnabled={isProcessedMicEnabled}
             isNativeRobotEnabled={isNativeRobotEnabled}
@@ -687,6 +710,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             onToggleClearMic={() => setClearMicEnabled((current) => !current)}
             onTrebleGainChange={setTrebleGain}
             onVoiceChange={handleVoiceChange}
+            voicemodStatus={voicemodStatus}
           />
         )}
 

@@ -35,6 +35,9 @@ const EMPTY_GRAPH = Object.freeze({
 });
 
 const VOICEMOD_WS_URL = 'ws://localhost:59129/v1/';
+const VOICEMOD_HEALTH_URL = 'http://localhost:59129/v1/';
+const VOICEMOD_HEALTH_INTERVAL_MS = 5000;
+const VOICEMOD_HEALTH_TIMEOUT_MS = 1800;
 const VOICEMOD_REQUEST_TIMEOUT_MS = 5000;
 const VOICEMOD_CLIENT_KEY = import.meta.env.PUBLIC_VOICEMOD_CLIENT_KEY?.trim() ?? '';
 
@@ -223,6 +226,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
   const [midGain, setMidGainState] = useState(0);
   const [processedStream, setProcessedStream] = useState(null);
   const [trebleGain, setTrebleGainState] = useState(0);
+  const [voicemodStatus, setVoicemodStatus] = useState('connecting');
   const [voices, setVoices] = useState(VOICEMOD_VOICES);
 
   const clearMicEnabledRef = useRef(clearMicEnabled);
@@ -470,7 +474,10 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
     if (registerResolverRef.current) {
       registerResolverRef.current();
       registerResolverRef.current = null;
-      if (!isUnmountedRef.current) setConnected(true);
+      if (!isUnmountedRef.current) {
+        setConnected(true);
+        setVoicemodStatus('connected');
+      }
     }
 
     const voiceId = getVoiceIdFromMessage(message);
@@ -521,6 +528,8 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
       throw new Error('WebSocket no esta disponible en este navegador.');
     }
 
+    if (!isUnmountedRef.current) setVoicemodStatus('connecting');
+
     const existingSocket = websocketRef.current;
     if (existingSocket?.readyState === WebSocket.OPEN) {
       return existingSocket;
@@ -538,7 +547,10 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
       const timeoutId = window.setTimeout(() => {
         registerResolverRef.current = null;
         registerPromiseRef.current = null;
-        if (!isUnmountedRef.current) setConnected(false);
+        if (!isUnmountedRef.current) {
+          setConnected(false);
+          setVoicemodStatus('disconnected');
+        }
         reject(new Error('Voicemod no respondio al registro del cliente.'));
       }, VOICEMOD_REQUEST_TIMEOUT_MS);
 
@@ -569,7 +581,10 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
         clearTimeout(timeoutId);
         registerResolverRef.current = null;
         registerPromiseRef.current = null;
-        if (!isUnmountedRef.current) setConnected(false);
+        if (!isUnmountedRef.current) {
+          setConnected(false);
+          setVoicemodStatus('disconnected');
+        }
         reject(new Error('No fue posible conectar con Voicemod en localhost.'));
       });
 
@@ -578,7 +593,10 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
         registerResolverRef.current = null;
         registerPromiseRef.current = null;
         websocketRef.current = null;
-        if (!isUnmountedRef.current) setConnected(false);
+        if (!isUnmountedRef.current) {
+          setConnected(false);
+          setVoicemodStatus('disconnected');
+        }
         rejectPendingRequests(pendingRequestsRef.current, new Error('La conexion con Voicemod se cerro.'));
       });
     });
@@ -674,6 +692,75 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
   }, [clearMicEnabled, isNativeRobotEnabled, rebuildGraph]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    let cancelled = false;
+    let activeController = null;
+    let activeTimeoutId = null;
+
+    const clearActiveRequest = () => {
+      if (activeTimeoutId) {
+        window.clearTimeout(activeTimeoutId);
+        activeTimeoutId = null;
+      }
+      activeController = null;
+    };
+
+    const runHealthCheck = async () => {
+      if (cancelled) return;
+
+      if (typeof fetch !== 'function') {
+        setVoicemodStatus('disconnected');
+        setConnected(false);
+        return;
+      }
+
+      setVoicemodStatus((currentStatus) => (currentStatus === 'connected' ? 'connected' : 'connecting'));
+
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      activeController = controller;
+
+      if (controller) {
+        activeTimeoutId = window.setTimeout(() => {
+          controller.abort();
+        }, VOICEMOD_HEALTH_TIMEOUT_MS);
+      }
+
+      try {
+        await fetch(VOICEMOD_HEALTH_URL, {
+          cache: 'no-store',
+          method: 'GET',
+          mode: 'no-cors',
+          signal: controller?.signal,
+        });
+
+        if (!cancelled) {
+          setVoicemodStatus('connected');
+        }
+      } catch {
+        if (!cancelled) {
+          setVoicemodStatus('disconnected');
+          setConnected(false);
+        }
+      } finally {
+        clearActiveRequest();
+      }
+    };
+
+    void runHealthCheck();
+    const intervalId = window.setInterval(() => {
+      void runHealthCheck();
+    }, VOICEMOD_HEALTH_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      if (activeTimeoutId) window.clearTimeout(activeTimeoutId);
+      activeController?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
     eqGainsRef.current = {
       bass: bassGain,
       mid: midGain,
@@ -728,6 +815,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
     setNativeRobotEnabled,
     setTrebleGain,
     trebleGain,
+    voicemodStatus,
     voices,
   };
 }
