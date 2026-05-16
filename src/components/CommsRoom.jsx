@@ -7,6 +7,7 @@ import {
   useParticipants,
   useConnectionQualityIndicator,
 } from '@livekit/components-react';
+import { Track } from 'livekit-client';
 import {
   Mic, MicOff, PhoneOff, Headphones,
   SignalHigh, SignalMedium, SignalLow, AlertTriangle,
@@ -17,6 +18,7 @@ import { useVoiceProcessor } from '../hooks/useVoiceProcessor.js';
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const SUBROOM_MAX_LEN = 24;
 const SUBROOM_RE      = /^[A-Z0-9_\-]+$/;
+const PROCESSED_TRACK_NAME = 'stealth-comms-processed-mic';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function sanitizeRoomCode(raw) {
@@ -46,6 +48,41 @@ function getSignalMeta(quality) {
 function getErrorMessage(error) {
   if (!error) return '';
   return error instanceof Error ? error.message : String(error);
+}
+
+async function unpublishProcessedMic(localParticipant, publication, fallbackTrack) {
+  if (!localParticipant || typeof localParticipant.unpublishTrack !== 'function') return;
+
+  const track = publication?.track ?? fallbackTrack;
+  if (track) {
+    await localParticipant.unpublishTrack(track, false);
+  }
+}
+
+function formatDb(value) {
+  const numericValue = Number(value);
+  const safeValue = Number.isFinite(numericValue) ? numericValue : 0;
+  return `${safeValue > 0 ? '+' : ''}${safeValue} dB`;
+}
+
+function ManualEqSlider({ label, max, min, onChange, step, value }) {
+  return (
+    <label className="block">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <span className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.12em] text-slate-300">{label}</span>
+        <span className="font-mono text-[0.62rem] font-bold tabular-nums text-amber-300">{formatDb(value)}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-950 accent-[#c9a227] outline-none [box-shadow:inset_0_0_0_1px_rgba(148,163,184,0.18)] [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#c9a227] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#c9a227] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(201,162,39,0.18)]"
+      />
+    </label>
+  );
 }
 
 // ─── ParticipantRow ───────────────────────────────────────────────────────────
@@ -172,21 +209,40 @@ function SubRoomManager({ baseRoom, onSwitchRoom, activeSubRoom, onCreateSubRoom
 
 // ─── CommsRoomUI ─────────────────────────────────────────────────────────────
 function VoiceProcessorPanel({
+  bassGain,
+  clearMicEnabled,
   currentVoiceId,
+  eqGainRange,
   errorMessage,
   isChangingVoice,
   isConfigured,
   isConnected,
+  isLocalProcessing,
+  isMicEnabled,
+  isNativeRobotEnabled,
+  isPublishing,
+  midGain,
+  onBassGainChange,
+  onMidGainChange,
+  onRobotToggle,
+  onToggleClearMic,
+  onTrebleGainChange,
   onVoiceChange,
+  trebleGain,
   voices,
 }) {
-  const status = isChangingVoice
+  const voicemodStatus = isChangingVoice
     ? 'CAMBIANDO VOZ'
     : isConnected
       ? 'VOICEMOD CONECTADO'
       : isConfigured
         ? 'VOICEMOD LISTO'
         : 'CLIENT KEY FALTANTE';
+  const localStatus = isPublishing
+    ? 'PUBLICANDO'
+    : isMicEnabled
+      ? isLocalProcessing ? 'PROCESADO ACTIVO' : 'MIC ACTIVO'
+      : 'MIC EN SILENCIO';
 
   return (
     <div style={s.voicePanel}>
@@ -194,25 +250,96 @@ function VoiceProcessorPanel({
         <div>
           <p style={s.voicePanelTitle} className="font-mono">AJUSTES DE AUDIO</p>
           <p style={s.voicePanelStatus} className="font-mono">
-            {status}
+            {localStatus}
           </p>
         </div>
-        <span
-          style={{
-            ...s.voiceSwitch,
-            ...(isConnected ? s.voiceSwitchActive : {}),
-            cursor: 'default',
-          }}
-        >
-          V3 API
-        </span>
       </div>
 
-      <div className="rounded-md border border-slate-700/80 bg-slate-950/60 p-3 shadow-inner shadow-black/30">
+      <section className="rounded-md border border-slate-700/80 bg-slate-950/70 p-3 shadow-inner shadow-black/30">
         <div className="mb-3 flex items-center justify-between gap-3">
           <p className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] text-amber-200">
-            VOCES PROFESIONALES
+            PROCESAMIENTO LOCAL
           </p>
+          <button
+            type="button"
+            onClick={onToggleClearMic}
+            style={{
+              ...s.voiceSwitch,
+              ...(clearMicEnabled ? s.voiceSwitchActive : {}),
+            }}
+            aria-pressed={clearMicEnabled}
+          >
+            ClearMic {clearMicEnabled ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
+        <div className="grid gap-3">
+          <ManualEqSlider
+            label="Bajos (200Hz)"
+            min={eqGainRange.min}
+            max={eqGainRange.max}
+            step={eqGainRange.step}
+            value={bassGain}
+            onChange={onBassGainChange}
+          />
+          <ManualEqSlider
+            label="Medios (2.5kHz)"
+            min={eqGainRange.min}
+            max={eqGainRange.max}
+            step={eqGainRange.step}
+            value={midGain}
+            onChange={onMidGainChange}
+          />
+          <ManualEqSlider
+            label="Agudos (5kHz)"
+            min={eqGainRange.min}
+            max={eqGainRange.max}
+            step={eqGainRange.step}
+            value={trebleGain}
+            onChange={onTrebleGainChange}
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={onRobotToggle}
+          style={{
+            ...s.nativeRobotBtn,
+            ...(isNativeRobotEnabled ? s.nativeRobotBtnActive : {}),
+          }}
+          aria-pressed={isNativeRobotEnabled}
+        >
+          Efecto Robot (Nativo) {isNativeRobotEnabled ? 'ON' : 'OFF'}
+        </button>
+      </section>
+
+      <section className="rounded-md border border-amber-900/50 bg-gray-900 p-3 shadow-inner shadow-black/30">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] text-amber-300">
+              INTEGRACION VOICEMOD
+            </p>
+            <p className="mt-1 text-[0.68rem] leading-4 text-slate-400">
+              Requiere App Desktop
+            </p>
+          </div>
+          <span
+            style={{
+              ...s.voiceSwitch,
+              ...(isConnected ? s.voiceSwitchActive : {}),
+              cursor: 'default',
+            }}
+          >
+            V3 API
+          </span>
+        </div>
+        <p className="mb-3 rounded border border-amber-900/40 bg-black/25 px-2 py-1.5 text-[0.68rem] leading-4 text-amber-100/80">
+          Abre Voicemod en tu PC para usar estos filtros
+        </p>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-slate-500">
+            {voicemodStatus}
+          </span>
           <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-slate-500">
             CONTROL REMOTO
           </span>
@@ -240,7 +367,7 @@ function VoiceProcessorPanel({
             );
           })}
         </div>
-      </div>
+      </section>
 
       {errorMessage && (
         <p style={s.voiceError} className="font-mono" role="alert">
@@ -253,28 +380,120 @@ function VoiceProcessorPanel({
 
 function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubRoom }) {
   const participants               = useParticipants();
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const { localParticipant } = useLocalParticipant();
   const [isUpdatingMic, setUpdatingMic]  = useState(false);
   const [isDeafened, setDeafened]        = useState(false);
   const [isPttMode, setPttMode]          = useState(false);
   const [showSubRooms, setShowSubRooms]  = useState(false);
   const [showVoicePanel, setShowVoicePanel] = useState(false);
   const [activeSubRoom, setActiveSubRoom] = useState(null);
+  const [voicePublication, setVoicePublication] = useState(null);
+  const [isPublishingVoice, setPublishingVoice] = useState(false);
+  const [isProcessedMicEnabled, setProcessedMicEnabled] = useState(false);
   const [voiceError, setVoiceError] = useState('');
-  const micUpdateRef = useRef(false);
+  const processedTrackRef = useRef(null);
+  const publicationRef = useRef(null);
   const {
+    bassGain,
     changeVoicemodVoice,
+    clearMicEnabled,
     currentVoiceId,
+    eqGainRange,
     error: processorError,
     isChangingVoice,
     isConnected: isVoicemodConnected,
+    isNativeRobotEnabled,
+    isProcessing: isLocalProcessing,
     isVoicemodConfigured,
+    midGain,
+    processedTrack,
     refreshVoicemodVoices,
+    release,
+    requestMicrophoneStream,
+    setBassGain,
+    setClearMicEnabled,
+    setMidGain,
+    setNativeRobotEnabled,
+    setTrebleGain,
+    trebleGain,
     voices: voicemodVoices,
   } = useVoiceProcessor();
 
   const activeRoomDisplay = sanitizeRoomCode(roomName) || 'CANAL';
   const voiceErrorMessage = voiceError || getErrorMessage(processorError);
+
+  useEffect(() => {
+    processedTrackRef.current = processedTrack;
+  }, [processedTrack]);
+
+  useEffect(() => {
+    if (!localParticipant) return undefined;
+
+    let cancelled = false;
+    const participant = localParticipant;
+
+    const publishProcessedMic = async () => {
+      setPublishingVoice(true);
+      setVoiceError('');
+
+      try {
+        const existingMic = participant.getTrackPublication?.(Track.Source.Microphone);
+        if (existingMic?.track && existingMic.trackName !== PROCESSED_TRACK_NAME) {
+          await participant.unpublishTrack(existingMic.track, true);
+        }
+
+        const result = await requestMicrophoneStream();
+        const trackToPublish = result.processedTrack;
+        if (!trackToPublish) throw new Error('No se pudo crear el track de microfono procesado.');
+
+        processedTrackRef.current = trackToPublish;
+
+        if (cancelled) {
+          await release({ updateState: false });
+          return;
+        }
+
+        const publication = await participant.publishTrack(trackToPublish, {
+          dtx: true,
+          name: PROCESSED_TRACK_NAME,
+          red: true,
+          source: Track.Source.Microphone,
+          stopMicTrackOnMute: false,
+        });
+
+        if (cancelled) {
+          await unpublishProcessedMic(participant, publication, trackToPublish);
+          await release({ updateState: false });
+          return;
+        }
+
+        publicationRef.current = publication;
+        setVoicePublication(publication);
+        setProcessedMicEnabled(true);
+      } catch (error) {
+        publicationRef.current = null;
+        setVoicePublication(null);
+        setProcessedMicEnabled(false);
+        setVoiceError(getErrorMessage(error));
+        await release().catch(() => {});
+      } finally {
+        if (!cancelled) setPublishingVoice(false);
+      }
+    };
+
+    void publishProcessedMic();
+
+    return () => {
+      cancelled = true;
+      const publication = publicationRef.current;
+      const fallbackTrack = processedTrackRef.current;
+      publicationRef.current = null;
+      processedTrackRef.current = null;
+      void unpublishProcessedMic(participant, publication, fallbackTrack).finally(() => {
+        void release({ updateState: false });
+      });
+    };
+  }, [localParticipant, release, requestMicrophoneStream]);
 
   useEffect(() => {
     if (!showVoicePanel || !isVoicemodConfigured) return undefined;
@@ -290,46 +509,54 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     };
   }, [isVoicemodConfigured, refreshVoicemodVoices, showVoicePanel]);
 
-  const setCleanMicEnabled = useCallback(
+  const setProcessedMicActive = useCallback(
     async (enabled) => {
-      if (!localParticipant || micUpdateRef.current) return;
+      if (isUpdatingMic) return;
 
-      micUpdateRef.current = true;
+      const publication = publicationRef.current ?? voicePublication;
+      const track = processedTrackRef.current;
+      if (!publication && !track) return;
+
       setUpdatingMic(true);
       try {
-        await localParticipant.setMicrophoneEnabled(enabled);
+        if (publication) {
+          if (enabled) await publication.unmute();
+          else await publication.mute();
+        }
+
+        if (track) track.enabled = enabled;
+        setProcessedMicEnabled(enabled);
         setVoiceError('');
       } catch (error) {
         setVoiceError(getErrorMessage(error));
       } finally {
-        micUpdateRef.current = false;
         setUpdatingMic(false);
       }
     },
-    [localParticipant]
+    [isUpdatingMic, voicePublication]
   );
 
   // ─── PTT: modo Walkie-Talkie ────────────────────────────────────────────
   const handleTogglePtt = useCallback(async () => {
     const next = !isPttMode;
     setPttMode(next);
-    if (next && isMicrophoneEnabled) {
-      await setCleanMicEnabled(false);
+    if (next && isProcessedMicEnabled) {
+      await setProcessedMicActive(false);
     }
-  }, [isMicrophoneEnabled, isPttMode, setCleanMicEnabled]);
+  }, [isProcessedMicEnabled, isPttMode, setProcessedMicActive]);
 
   useEffect(() => {
-    if (!isPttMode || !localParticipant) return undefined;
+    if (!isPttMode) return undefined;
     const onDown = async (e) => {
-      if (e.code === 'Space' && !e.repeat) {
+      if (e.code === 'Space' && !e.repeat && !isUpdatingMic) {
         e.preventDefault();
-        await setCleanMicEnabled(true);
+        await setProcessedMicActive(true);
       }
     };
     const onUp = async (e) => {
-      if (e.code === 'Space') {
+      if (e.code === 'Space' && !isUpdatingMic) {
         e.preventDefault();
-        await setCleanMicEnabled(false);
+        await setProcessedMicActive(false);
       }
     };
     window.addEventListener('keydown', onDown);
@@ -338,7 +565,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
     };
-  }, [isPttMode, localParticipant, setCleanMicEnabled]);
+  }, [isPttMode, isUpdatingMic, setProcessedMicActive]);
 
   const handleVoiceChange = useCallback(
     async (voiceId) => {
@@ -375,7 +602,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   };
 
   const handleToggleMic = async () => {
-    await setCleanMicEnabled(!isMicrophoneEnabled);
+    await setProcessedMicActive(!isProcessedMicEnabled);
   };
 
   const handleCreateSubRoom = (code) => {
@@ -439,12 +666,26 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
 
         {showVoicePanel && (
           <VoiceProcessorPanel
+            bassGain={bassGain}
+            clearMicEnabled={clearMicEnabled}
             currentVoiceId={currentVoiceId}
+            eqGainRange={eqGainRange}
             errorMessage={voiceErrorMessage}
             isChangingVoice={isChangingVoice}
             isConfigured={isVoicemodConfigured}
             isConnected={isVoicemodConnected}
+            isLocalProcessing={isLocalProcessing}
+            isMicEnabled={isProcessedMicEnabled}
+            isNativeRobotEnabled={isNativeRobotEnabled}
+            isPublishing={isPublishingVoice}
+            midGain={midGain}
+            trebleGain={trebleGain}
             voices={voicemodVoices}
+            onBassGainChange={setBassGain}
+            onMidGainChange={setMidGain}
+            onRobotToggle={() => setNativeRobotEnabled((current) => !current)}
+            onToggleClearMic={() => setClearMicEnabled((current) => !current)}
+            onTrebleGainChange={setTrebleGain}
             onVoiceChange={handleVoiceChange}
           />
         )}
@@ -476,7 +717,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           <ControlBtn
             id="ctrl-ptt"
             onClick={handleTogglePtt}
-            disabled={!localParticipant || isUpdatingMic}
+            disabled={!voicePublication || isPublishingVoice}
             label={isPttMode ? 'PTT ON' : 'PTT OFF'}
             active={isPttMode}
             icon={<Radio size={18} color={isPttMode ? 'var(--c-bg-base)' : 'var(--c-text-secondary)'} />}
@@ -484,9 +725,9 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           <ControlBtn
             id="ctrl-mic"
             onClick={handleToggleMic}
-            disabled={!localParticipant || isUpdatingMic}
-            label={isMicrophoneEnabled ? 'MUTEAR' : 'ACTIVAR'}
-            icon={isMicrophoneEnabled
+            disabled={!voicePublication || isUpdatingMic || isPublishingVoice}
+            label={isProcessedMicEnabled ? 'MUTEAR' : 'ACTIVAR'}
+            icon={isProcessedMicEnabled
               ? <Mic    size={18} color="var(--c-text-secondary)" />
               : <MicOff size={18} color="var(--c-red)" />
             }
@@ -543,7 +784,7 @@ export default function CommsRoom({ nickname, roomName, token, serverUrl, onDisc
       token={token}
       serverUrl={serverUrl}
       connect={Boolean(token && serverUrl)}
-      audio={true}
+      audio={false}
       video={false}
       style={s.livekitRoot}
       onDisconnected={onDisconnect}
@@ -756,6 +997,27 @@ const s = {
     background: 'rgba(34,197,94,0.12)',
     borderColor: 'rgba(34,197,94,0.45)',
     color: 'var(--c-green)',
+  },
+  nativeRobotBtn: {
+    marginTop: '12px',
+    width: '100%',
+    minHeight: '34px',
+    background: 'rgba(15,23,42,0.82)',
+    border: '1px solid rgba(148,163,184,0.22)',
+    borderRadius: 'var(--r-sm)',
+    color: 'var(--c-text-secondary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.6rem',
+    fontWeight: 800,
+    letterSpacing: '0.1em',
+    padding: '8px 10px',
+    textTransform: 'uppercase',
+  },
+  nativeRobotBtnActive: {
+    background: 'rgba(201,162,39,0.16)',
+    borderColor: 'var(--c-gold-dim)',
+    color: 'var(--c-gold)',
   },
   voicePresetGrid: {
     display: 'grid',

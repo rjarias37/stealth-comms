@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const VOICEMOD_VOICE_PRESETS = Object.freeze([
   { id: 'nofx', label: 'Clean', aliases: ['nofx', 'no fx', 'clean'] },
@@ -13,6 +13,27 @@ export const VOICEMOD_VOICES = Object.freeze(
   VOICEMOD_VOICE_PRESETS.map(({ id, label }) => ({ id, label, enabled: true }))
 );
 
+export const EQ_GAIN_RANGE = Object.freeze({
+  min: -12,
+  max: 12,
+  step: 1,
+});
+
+const DEFAULT_MIC_CONSTRAINTS = Object.freeze({
+  audio: {
+    autoGainControl: false,
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: false,
+  },
+  video: false,
+});
+
+const EMPTY_GRAPH = Object.freeze({
+  nodes: [],
+  stoppables: [],
+});
+
 const VOICEMOD_WS_URL = 'ws://localhost:59129/v1/';
 const VOICEMOD_REQUEST_TIMEOUT_MS = 5000;
 const VOICEMOD_CLIENT_KEY = import.meta.env.PUBLIC_VOICEMOD_CLIENT_KEY?.trim() ?? '';
@@ -23,6 +44,37 @@ const createActionId = () => {
   }
 
   return `stealth-comms-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const getAudioContextConstructor = () => {
+  if (typeof window === 'undefined') return null;
+
+  const audioWindow = window;
+  return audioWindow.AudioContext || audioWindow.webkitAudioContext || null;
+};
+
+const setAudioParam = (param, value, context) => {
+  param.cancelScheduledValues(context.currentTime);
+  param.setValueAtTime(value, context.currentTime);
+};
+
+const rampAudioParam = (param, value, context, duration = 0.035) => {
+  const startTime = context.currentTime;
+  param.cancelScheduledValues(startTime);
+  param.setValueAtTime(param.value, startTime);
+  param.linearRampToValueAtTime(value, startTime + duration);
+};
+
+const clampEqGain = (value) => {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+  return Math.min(EQ_GAIN_RANGE.max, Math.max(EQ_GAIN_RANGE.min, Math.round(numericValue)));
+};
+
+const stopStreamTracks = (stream) => {
+  stream?.getTracks().forEach((track) => {
+    if (track.readyState !== 'ended') track.stop();
+  });
 };
 
 const parseVoicemodMessage = (event) => {
@@ -84,34 +136,320 @@ const rejectPendingRequests = (pendingRequests, error) => {
   pendingRequests.clear();
 };
 
-export function useVoiceProcessor() {
+const connectClearMicEqualizer = (context, input, graph) => {
+  const highpass = context.createBiquadFilter();
+  highpass.type = 'highpass';
+  setAudioParam(highpass.frequency, 150, context);
+  setAudioParam(highpass.Q, 0.707, context);
+
+  const presence = context.createBiquadFilter();
+  presence.type = 'peaking';
+  setAudioParam(presence.frequency, 2500, context);
+  setAudioParam(presence.gain, 3, context);
+  setAudioParam(presence.Q, 1, context);
+
+  input.connect(highpass);
+  highpass.connect(presence);
+  graph.nodes.push(highpass, presence);
+
+  return presence;
+};
+
+const connectNativeRobotEffect = (context, input, graph) => {
+  const ringGain = context.createGain();
+  setAudioParam(ringGain.gain, 0, context);
+
+  const oscillator = context.createOscillator();
+  oscillator.type = 'sawtooth';
+  setAudioParam(oscillator.frequency, 50, context);
+
+  const modulationDepth = context.createGain();
+  setAudioParam(modulationDepth.gain, 0.78, context);
+
+  const lowpass = context.createBiquadFilter();
+  lowpass.type = 'lowpass';
+  setAudioParam(lowpass.frequency, 3000, context);
+  setAudioParam(lowpass.Q, 0.707, context);
+
+  input.connect(ringGain);
+  oscillator.connect(modulationDepth);
+  modulationDepth.connect(ringGain.gain);
+  ringGain.connect(lowpass);
+  oscillator.start();
+
+  graph.nodes.push(ringGain, oscillator, modulationDepth, lowpass);
+  graph.stoppables.push(oscillator);
+
+  return lowpass;
+};
+
+const connectManualEqualizer = (context, input, graph, gains, eqNodesRef) => {
+  const bass = context.createBiquadFilter();
+  bass.type = 'lowshelf';
+  setAudioParam(bass.frequency, 200, context);
+  setAudioParam(bass.gain, gains.bass, context);
+
+  const mid = context.createBiquadFilter();
+  mid.type = 'peaking';
+  setAudioParam(mid.frequency, 2500, context);
+  setAudioParam(mid.Q, 1, context);
+  setAudioParam(mid.gain, gains.mid, context);
+
+  const treble = context.createBiquadFilter();
+  treble.type = 'highshelf';
+  setAudioParam(treble.frequency, 5000, context);
+  setAudioParam(treble.gain, gains.treble, context);
+
+  input.connect(bass);
+  bass.connect(mid);
+  mid.connect(treble);
+
+  graph.nodes.push(bass, mid, treble);
+  eqNodesRef.current = { bass, mid, treble };
+
+  return treble;
+};
+
+export function useVoiceProcessor({ initialClearMicEnabled = true, initialNativeRobotEnabled = false } = {}) {
+  const [bassGain, setBassGainState] = useState(0);
+  const [clearMicEnabled, setClearMicEnabledState] = useState(Boolean(initialClearMicEnabled));
   const [currentVoiceId, setCurrentVoiceId] = useState('nofx');
   const [error, setError] = useState('');
   const [isChangingVoice, setChangingVoice] = useState(false);
   const [isConnected, setConnected] = useState(false);
+  const [isNativeRobotEnabled, setNativeRobotEnabledState] = useState(Boolean(initialNativeRobotEnabled));
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isReady, setIsReady] = useState(false);
+  const [midGain, setMidGainState] = useState(0);
+  const [processedStream, setProcessedStream] = useState(null);
+  const [trebleGain, setTrebleGainState] = useState(0);
   const [voices, setVoices] = useState(VOICEMOD_VOICES);
 
+  const clearMicEnabledRef = useRef(clearMicEnabled);
+  const contextRef = useRef(null);
+  const destinationRef = useRef(null);
+  const eqGainsRef = useRef({ bass: bassGain, mid: midGain, treble: trebleGain });
+  const eqNodesRef = useRef({ bass: null, mid: null, treble: null });
+  const graphRef = useRef(EMPTY_GRAPH);
+  const inputStreamRef = useRef(null);
+  const isNativeRobotEnabledRef = useRef(isNativeRobotEnabled);
+  const isUnmountedRef = useRef(false);
+  const ownsInputStreamRef = useRef(false);
   const pendingRequestsRef = useRef(new Map());
   const registerPromiseRef = useRef(null);
   const registerResolverRef = useRef(null);
-  const isUnmountedRef = useRef(false);
+  const sourceRef = useRef(null);
   const websocketRef = useRef(null);
 
-  useEffect(() => {
-    isUnmountedRef.current = false;
+  const disposeGraph = useCallback(() => {
+    sourceRef.current?.disconnect();
 
-    return () => {
-      isUnmountedRef.current = true;
-      registerResolverRef.current = null;
-      registerPromiseRef.current = null;
-      rejectPendingRequests(pendingRequestsRef.current, new Error('La conexion con Voicemod se cerro.'));
-
-      const socket = websocketRef.current;
-      websocketRef.current = null;
-      if (socket && typeof WebSocket !== 'undefined' && socket.readyState < WebSocket.CLOSING) {
-        socket.close();
+    graphRef.current.stoppables.forEach((node) => {
+      try {
+        node.stop();
+      } catch {
+        // Oscillators can already be stopped during quick hot swaps.
       }
-    };
+    });
+
+    graphRef.current.nodes.forEach((node) => {
+      node.disconnect();
+    });
+
+    graphRef.current = EMPTY_GRAPH;
+    eqNodesRef.current = { bass: null, mid: null, treble: null };
+  }, []);
+
+  const ensureAudioContext = useCallback(() => {
+    const AudioContextConstructor = getAudioContextConstructor();
+    if (!AudioContextConstructor) {
+      throw new Error('Web Audio API no esta disponible en este navegador.');
+    }
+
+    if (!contextRef.current || contextRef.current.state === 'closed') {
+      const context = new AudioContextConstructor({ latencyHint: 'interactive' });
+      const destination = context.createMediaStreamDestination();
+
+      contextRef.current = context;
+      destinationRef.current = destination;
+      if (!isUnmountedRef.current) setProcessedStream(destination.stream);
+    }
+
+    return contextRef.current;
+  }, []);
+
+  const rebuildGraph = useCallback(() => {
+    const context = contextRef.current;
+    const source = sourceRef.current;
+    const destination = destinationRef.current;
+
+    if (!context || !source || !destination || context.state === 'closed') return;
+
+    disposeGraph();
+
+    const graph = { nodes: [], stoppables: [] };
+    let output = source;
+
+    if (clearMicEnabledRef.current) {
+      output = connectClearMicEqualizer(context, output, graph);
+    }
+
+    if (isNativeRobotEnabledRef.current) {
+      output = connectNativeRobotEffect(context, output, graph);
+    }
+
+    output = connectManualEqualizer(context, output, graph, eqGainsRef.current, eqNodesRef);
+
+    const outputGain = context.createGain();
+    setAudioParam(outputGain.gain, 0.0001, context);
+    output.connect(outputGain);
+    outputGain.connect(destination);
+    rampAudioParam(outputGain.gain, 1, context, 0.04);
+    graph.nodes.push(outputGain);
+
+    graphRef.current = graph;
+    if (!isUnmountedRef.current) setIsProcessing(true);
+  }, [disposeGraph]);
+
+  const updateManualEqGains = useCallback(() => {
+    const context = contextRef.current;
+    if (!context || context.state === 'closed') return;
+
+    const { bass, mid, treble } = eqNodesRef.current;
+    if (bass) rampAudioParam(bass.gain, eqGainsRef.current.bass, context);
+    if (mid) rampAudioParam(mid.gain, eqGainsRef.current.mid, context);
+    if (treble) rampAudioParam(treble.gain, eqGainsRef.current.treble, context);
+  }, []);
+
+  const attachInputStream = useCallback(
+    async (stream, { ownsStream = false } = {}) => {
+      const audioTrack = stream?.getAudioTracks?.()[0];
+      if (!audioTrack || audioTrack.readyState === 'ended') {
+        throw new Error('Se requiere un MediaStream de microfono activo.');
+      }
+
+      const context = ensureAudioContext();
+      if (context.state === 'suspended') await context.resume();
+
+      disposeGraph();
+      sourceRef.current?.disconnect();
+      sourceRef.current = context.createMediaStreamSource(stream);
+
+      if (ownsInputStreamRef.current && inputStreamRef.current && inputStreamRef.current !== stream) {
+        stopStreamTracks(inputStreamRef.current);
+      }
+
+      inputStreamRef.current = stream;
+      ownsInputStreamRef.current = ownsStream;
+
+      if (!isUnmountedRef.current) {
+        setError('');
+        setIsReady(true);
+      }
+
+      rebuildGraph();
+
+      return {
+        inputStream: stream,
+        processedStream: destinationRef.current.stream,
+        processedTrack: destinationRef.current.stream.getAudioTracks()[0] ?? null,
+      };
+    },
+    [disposeGraph, ensureAudioContext, rebuildGraph]
+  );
+
+  const requestMicrophoneStream = useCallback(
+    async (constraints = DEFAULT_MIC_CONSTRAINTS) => {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error('La captura de microfono no esta disponible en este navegador.');
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        return await attachInputStream(stream, { ownsStream: true });
+      } catch (streamError) {
+        const message = streamError instanceof Error ? streamError.message : String(streamError);
+        if (!isUnmountedRef.current) setError(message);
+        throw streamError;
+      }
+    },
+    [attachInputStream]
+  );
+
+  const release = useCallback(
+    async ({ stopInput = true, updateState = true } = {}) => {
+      disposeGraph();
+      sourceRef.current?.disconnect();
+      sourceRef.current = null;
+
+      if (stopInput && ownsInputStreamRef.current) {
+        stopStreamTracks(inputStreamRef.current);
+      }
+
+      stopStreamTracks(destinationRef.current?.stream);
+
+      const context = contextRef.current;
+      contextRef.current = null;
+      destinationRef.current = null;
+      inputStreamRef.current = null;
+      ownsInputStreamRef.current = false;
+
+      if (updateState && !isUnmountedRef.current) {
+        setIsProcessing(false);
+        setIsReady(false);
+        setProcessedStream(null);
+      }
+
+      if (context && context.state !== 'closed') {
+        await context.close();
+      }
+    },
+    [disposeGraph]
+  );
+
+  const resume = useCallback(async () => {
+    const context = ensureAudioContext();
+    if (context.state === 'suspended') await context.resume();
+  }, [ensureAudioContext]);
+
+  const setClearMicEnabled = useCallback((nextEnabled) => {
+    setClearMicEnabledState((current) => {
+      const enabled = typeof nextEnabled === 'function' ? Boolean(nextEnabled(current)) : Boolean(nextEnabled);
+      clearMicEnabledRef.current = enabled;
+      return enabled;
+    });
+  }, []);
+
+  const setNativeRobotEnabled = useCallback((nextEnabled) => {
+    setNativeRobotEnabledState((current) => {
+      const enabled = typeof nextEnabled === 'function' ? Boolean(nextEnabled(current)) : Boolean(nextEnabled);
+      isNativeRobotEnabledRef.current = enabled;
+      return enabled;
+    });
+  }, []);
+
+  const setBassGain = useCallback((nextGain) => {
+    setBassGainState((currentGain) => {
+      const gain = clampEqGain(typeof nextGain === 'function' ? nextGain(currentGain) : nextGain);
+      eqGainsRef.current = { ...eqGainsRef.current, bass: gain };
+      return gain;
+    });
+  }, []);
+
+  const setMidGain = useCallback((nextGain) => {
+    setMidGainState((currentGain) => {
+      const gain = clampEqGain(typeof nextGain === 'function' ? nextGain(currentGain) : nextGain);
+      eqGainsRef.current = { ...eqGainsRef.current, mid: gain };
+      return gain;
+    });
+  }, []);
+
+  const setTrebleGain = useCallback((nextGain) => {
+    setTrebleGainState((currentGain) => {
+      const gain = clampEqGain(typeof nextGain === 'function' ? nextGain(currentGain) : nextGain);
+      eqGainsRef.current = { ...eqGainsRef.current, treble: gain };
+      return gain;
+    });
   }, []);
 
   const handleVoicemodMessage = useCallback((message) => {
@@ -125,7 +463,7 @@ export function useVoiceProcessor() {
         pending.reject(new Error(messageError));
         pendingRequestsRef.current.delete(responseId);
       }
-      setError(messageError);
+      if (!isUnmountedRef.current) setError(messageError);
       return;
     }
 
@@ -136,13 +474,13 @@ export function useVoiceProcessor() {
     }
 
     const voiceId = getVoiceIdFromMessage(message);
-    if (voiceId) {
+    if (voiceId && !isUnmountedRef.current) {
       setCurrentVoiceId(voiceId);
     }
 
     if (message?.actionType === 'getVoices') {
       const remoteVoices = message?.actionObject?.voices;
-      if (Array.isArray(remoteVoices)) {
+      if (Array.isArray(remoteVoices) && !isUnmountedRef.current) {
         setVoices(mapVoicemodPresetVoices(remoteVoices));
       }
 
@@ -176,11 +514,11 @@ export function useVoiceProcessor() {
 
   const connectVoicemod = useCallback(async () => {
     if (!VOICEMOD_CLIENT_KEY) {
-      throw new Error('PUBLIC_VOICEMOD_CLIENT_KEY no está configurada.');
+      throw new Error('PUBLIC_VOICEMOD_CLIENT_KEY no esta configurada.');
     }
 
     if (typeof WebSocket === 'undefined') {
-      throw new Error('WebSocket no está disponible en este navegador.');
+      throw new Error('WebSocket no esta disponible en este navegador.');
     }
 
     const existingSocket = websocketRef.current;
@@ -201,7 +539,7 @@ export function useVoiceProcessor() {
         registerResolverRef.current = null;
         registerPromiseRef.current = null;
         if (!isUnmountedRef.current) setConnected(false);
-        reject(new Error('Voicemod no respondió al registro del cliente.'));
+        reject(new Error('Voicemod no respondio al registro del cliente.'));
       }, VOICEMOD_REQUEST_TIMEOUT_MS);
 
       registerResolverRef.current = () => {
@@ -241,7 +579,7 @@ export function useVoiceProcessor() {
         registerPromiseRef.current = null;
         websocketRef.current = null;
         if (!isUnmountedRef.current) setConnected(false);
-        rejectPendingRequests(pendingRequestsRef.current, new Error('La conexión con Voicemod se cerró.'));
+        rejectPendingRequests(pendingRequestsRef.current, new Error('La conexion con Voicemod se cerro.'));
       });
     });
 
@@ -257,7 +595,7 @@ export function useVoiceProcessor() {
       return new Promise((resolve, reject) => {
         const timeoutId = window.setTimeout(() => {
           pendingRequestsRef.current.delete(requestId);
-          reject(new Error(`Voicemod no confirmó la acción ${action}.`));
+          reject(new Error(`Voicemod no confirmo la accion ${action}.`));
         }, VOICEMOD_REQUEST_TIMEOUT_MS);
 
         pendingRequestsRef.current.set(requestId, {
@@ -281,13 +619,13 @@ export function useVoiceProcessor() {
   );
 
   const refreshVoicemodVoices = useCallback(async () => {
-    setError('');
+    if (!isUnmountedRef.current) setError('');
 
     try {
       return await sendVoicemodAction('getVoices', {});
     } catch (voicesError) {
       const message = voicesError instanceof Error ? voicesError.message : String(voicesError);
-      setError(message);
+      if (!isUnmountedRef.current) setError(message);
       throw voicesError;
     }
   }, [sendVoicemodAction]);
@@ -299,8 +637,10 @@ export function useVoiceProcessor() {
         throw new Error('voiceId es obligatorio para cambiar la voz de Voicemod.');
       }
 
-      setChangingVoice(true);
-      setError('');
+      if (!isUnmountedRef.current) {
+        setChangingVoice(true);
+        setError('');
+      }
 
       try {
         const response = await sendVoicemodAction(
@@ -312,27 +652,82 @@ export function useVoiceProcessor() {
             voiceId: cleanVoiceId,
           }
         );
-        setCurrentVoiceId(cleanVoiceId);
+        if (!isUnmountedRef.current) setCurrentVoiceId(cleanVoiceId);
         return response;
       } catch (voiceError) {
         const message = voiceError instanceof Error ? voiceError.message : String(voiceError);
-        setError(message);
+        if (!isUnmountedRef.current) setError(message);
         throw voiceError;
       } finally {
-        setChangingVoice(false);
+        if (!isUnmountedRef.current) setChangingVoice(false);
       }
     },
     [sendVoicemodAction]
   );
 
+  const processedTrack = useMemo(() => processedStream?.getAudioTracks()[0] ?? null, [processedStream]);
+
+  useEffect(() => {
+    clearMicEnabledRef.current = clearMicEnabled;
+    isNativeRobotEnabledRef.current = isNativeRobotEnabled;
+    rebuildGraph();
+  }, [clearMicEnabled, isNativeRobotEnabled, rebuildGraph]);
+
+  useEffect(() => {
+    eqGainsRef.current = {
+      bass: bassGain,
+      mid: midGain,
+      treble: trebleGain,
+    };
+    updateManualEqGains();
+  }, [bassGain, midGain, trebleGain, updateManualEqGains]);
+
+  useEffect(() => {
+    isUnmountedRef.current = false;
+
+    return () => {
+      isUnmountedRef.current = true;
+      registerResolverRef.current = null;
+      registerPromiseRef.current = null;
+      rejectPendingRequests(pendingRequestsRef.current, new Error('La conexion con Voicemod se cerro.'));
+
+      const socket = websocketRef.current;
+      websocketRef.current = null;
+      if (socket && typeof WebSocket !== 'undefined' && socket.readyState < WebSocket.CLOSING) {
+        socket.close();
+      }
+
+      void release({ updateState: false });
+    };
+  }, [release]);
+
   return {
+    attachInputStream,
+    bassGain,
     changeVoicemodVoice,
+    clearMicEnabled,
     currentVoiceId,
     error,
+    eqGainRange: EQ_GAIN_RANGE,
     isChangingVoice,
     isConnected,
+    isNativeRobotEnabled,
+    isProcessing,
+    isReady,
     isVoicemodConfigured: Boolean(VOICEMOD_CLIENT_KEY),
+    midGain,
+    processedStream,
+    processedTrack,
     refreshVoicemodVoices,
+    release,
+    requestMicrophoneStream,
+    resume,
+    setBassGain,
+    setClearMicEnabled,
+    setMidGain,
+    setNativeRobotEnabled,
+    setTrebleGain,
+    trebleGain,
     voices,
   };
 }
