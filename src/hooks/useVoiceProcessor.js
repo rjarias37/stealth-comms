@@ -223,12 +223,16 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
   const [isNativeRobotEnabled, setNativeRobotEnabledState] = useState(Boolean(initialNativeRobotEnabled));
   const [isProcessing, setIsProcessing] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
   const [midGain, setMidGainState] = useState(0);
   const [processedStream, setProcessedStream] = useState(null);
   const [trebleGain, setTrebleGainState] = useState(0);
   const [voicemodStatus, setVoicemodStatus] = useState('connecting');
   const [voices, setVoices] = useState(VOICEMOD_VOICES);
 
+  const analyserDataRef = useRef(null);
+  const analyserFrameRef = useRef(null);
+  const analyserRef = useRef(null);
   const clearMicEnabledRef = useRef(clearMicEnabled);
   const contextRef = useRef(null);
   const destinationRef = useRef(null);
@@ -245,7 +249,53 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
   const sourceRef = useRef(null);
   const websocketRef = useRef(null);
 
+  const stopMicVolumeMeter = useCallback((resetVolume = false) => {
+    if (typeof window !== 'undefined' && analyserFrameRef.current !== null) {
+      window.cancelAnimationFrame(analyserFrameRef.current);
+    }
+
+    analyserDataRef.current = null;
+    analyserFrameRef.current = null;
+    analyserRef.current = null;
+
+    if (resetVolume && !isUnmountedRef.current) {
+      setMicVolume(0);
+    }
+  }, []);
+
+  const startMicVolumeMeter = useCallback((analyser) => {
+    if (typeof window === 'undefined') return;
+
+    stopMicVolumeMeter();
+
+    analyserRef.current = analyser;
+    analyserDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+
+    const updateVolume = () => {
+      const activeAnalyser = analyserRef.current;
+      const frequencyData = analyserDataRef.current;
+
+      if (!activeAnalyser || !frequencyData || isUnmountedRef.current) return;
+
+      activeAnalyser.getByteFrequencyData(frequencyData);
+
+      let total = 0;
+      for (let index = 0; index < frequencyData.length; index += 1) {
+        total += frequencyData[index];
+      }
+
+      const average = frequencyData.length > 0 ? total / frequencyData.length : 0;
+      const nextVolume = Math.min(100, Math.max(0, Math.round((average / 255) * 100)));
+      setMicVolume(nextVolume);
+
+      analyserFrameRef.current = window.requestAnimationFrame(updateVolume);
+    };
+
+    analyserFrameRef.current = window.requestAnimationFrame(updateVolume);
+  }, [stopMicVolumeMeter]);
+
   const disposeGraph = useCallback(() => {
+    stopMicVolumeMeter();
     sourceRef.current?.disconnect();
 
     graphRef.current.stoppables.forEach((node) => {
@@ -262,7 +312,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
 
     graphRef.current = EMPTY_GRAPH;
     eqNodesRef.current = { bass: null, mid: null, treble: null };
-  }, []);
+  }, [stopMicVolumeMeter]);
 
   const ensureAudioContext = useCallback(() => {
     const AudioContextConstructor = getAudioContextConstructor();
@@ -293,6 +343,13 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
 
     const graph = { nodes: [], stoppables: [] };
     let output = source;
+
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.82;
+    source.connect(analyser);
+    graph.nodes.push(analyser);
+    startMicVolumeMeter(analyser);
 
     if (clearMicEnabledRef.current) {
       output = connectClearMicEqualizer(context, output, graph);
@@ -401,6 +458,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
       if (updateState && !isUnmountedRef.current) {
         setIsProcessing(false);
         setIsReady(false);
+        setMicVolume(0);
         setProcessedStream(null);
       }
 
@@ -802,6 +860,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
     isProcessing,
     isReady,
     isVoicemodConfigured: Boolean(VOICEMOD_CLIENT_KEY),
+    micVolume,
     midGain,
     processedStream,
     processedTrack,

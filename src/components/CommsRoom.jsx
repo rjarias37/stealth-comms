@@ -220,6 +220,7 @@ function VoiceProcessorPanel({
   isMicEnabled,
   isNativeRobotEnabled,
   isPublishing,
+  micVolume,
   midGain,
   onBassGainChange,
   onMidGainChange,
@@ -260,6 +261,7 @@ function VoiceProcessorPanel({
     : isMicEnabled
       ? isLocalProcessing ? 'PROCESADO ACTIVO' : 'MIC ACTIVO'
       : 'MIC EN SILENCIO';
+  const safeMicVolume = Math.min(100, Math.max(0, Number.isFinite(Number(micVolume)) ? Number(micVolume) : 0));
 
   return (
     <div style={s.voicePanel}>
@@ -288,6 +290,23 @@ function VoiceProcessorPanel({
           >
             ClearMic {clearMicEnabled ? 'ON' : 'OFF'}
           </button>
+        </div>
+
+        <div className="mb-3">
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <span className="font-mono text-[0.56rem] font-bold uppercase tracking-[0.12em] text-slate-500">
+              Entrada Mic
+            </span>
+            <span className="font-mono text-[0.56rem] font-bold tabular-nums text-amber-300">
+              {safeMicVolume}%
+            </span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-gray-700">
+            <div
+              className="h-full rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.45)] transition-[width] duration-100"
+              style={{ width: `${safeMicVolume}%` }}
+            />
+          </div>
         </div>
 
         <div className="grid gap-3">
@@ -428,6 +447,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     isNativeRobotEnabled,
     isProcessing: isLocalProcessing,
     isVoicemodConfigured,
+    micVolume,
     midGain,
     processedTrack,
     refreshVoicemodVoices,
@@ -701,6 +721,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             isMicEnabled={isProcessedMicEnabled}
             isNativeRobotEnabled={isNativeRobotEnabled}
             isPublishing={isPublishingVoice}
+            micVolume={micVolume}
             midGain={midGain}
             trebleGain={trebleGain}
             voices={voicemodVoices}
