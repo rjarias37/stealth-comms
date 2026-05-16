@@ -1,1 +1,258 @@
 @import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STEALTH COMMS — DARK OPS DESIGN SYSTEM
+   Paleta: Negro Mate + Oro (Nébula Code)
+   Estándar: Mobile-First PWA / Core Web Vitals
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ─── Tokens de color ───────────────────────────────────────────────────── */
+:root {
+  /* Fondo */
+  --c-bg-base:      #080b12;
+  --c-bg-surface:   #0d1117;
+  --c-bg-elevated:  #141a24;
+  --c-bg-overlay:   #1a2235;
+
+  /* Bordes */
+  --c-border:       #1e2d42;
+  --c-border-soft:  #243044;
+
+  /* Oro — acento principal */
+  --c-gold:         #c9a227;
+  --c-gold-bright:  #e8c14a;
+  --c-gold-dim:     #7d641a;
+  --c-gold-glow:    rgba(201, 162, 39, 0.18);
+  --c-gold-glow-lg: rgba(201, 162, 39, 0.08);
+
+  /* Semáforo táctico */
+  --c-green:        #22c55e;
+  --c-amber:        #f59e0b;
+  --c-red:          #ef4444;
+  --c-red-dim:      #7f1d1d;
+
+  /* Texto */
+  --c-text-primary:   #f0f4ff;
+  --c-text-secondary: #8899b4;
+  --c-text-muted:     #4a5872;
+
+  /* Tipografía */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+
+  /* Radios */
+  --r-sm:   6px;
+  --r-md:  12px;
+  --r-lg:  18px;
+  --r-xl:  24px;
+  --r-full: 9999px;
+
+  /* Transiciones */
+  --t-fast:   120ms ease;
+  --t-base:   220ms ease;
+  --t-slow:   380ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Reset & base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--c-bg-base);
+  color: var(--c-text-primary);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Evita flashes de layout en PWA */
+  overscroll-behavior: none;
+}
+
+/* Scrollbar táctica */
+::-webkit-scrollbar         { width: 4px; }
+::-webkit-scrollbar-track   { background: var(--c-bg-base); }
+::-webkit-scrollbar-thumb   { background: var(--c-border); border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--c-gold-dim); }
+
+/* ─── Animaciones ───────────────────────────────────────────────────────── */
+@keyframes pulse-gold {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+@keyframes scan-line {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 0.4; }
+  90%  { opacity: 0.4; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+@keyframes speaker-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+  50%       { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+}
+
+@keyframes gold-ring {
+  0%, 100% { box-shadow: 0 0 0 0 var(--c-gold-glow); }
+  50%       { box-shadow: 0 0 0 8px transparent; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Utilidades globales ───────────────────────────────────────────────── */
+.font-mono       { font-family: var(--font-mono); }
+.text-gold       { color: var(--c-gold); }
+.text-gold-bright { color: var(--c-gold-bright); }
+.text-muted      { color: var(--c-text-muted); }
+.text-secondary  { color: var(--c-text-secondary); }
+.animate-fade-in { animation: fade-in 0.35s var(--t-slow) both; }
+.animate-slide-up { animation: slide-up 0.4s var(--t-slow) both; }
+.animate-pulse-gold { animation: pulse-gold 2s ease-in-out infinite; }
+
+/* ─── Componentes base ──────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 28px;
+  background: var(--c-gold);
+  color: var(--c-bg-base);
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: none;
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: background var(--t-base), transform var(--t-fast), box-shadow var(--t-base);
+  outline: none;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--c-gold-bright);
+  box-shadow: 0 0 24px var(--c-gold-glow);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: border-color var(--t-base), color var(--t-base), background var(--t-base);
+  outline: none;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--c-gold-dim);
+  color: var(--c-gold);
+  background: var(--c-gold-glow);
+}
+
+.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.input-tactical {
+  width: 100%;
+  background: var(--c-bg-elevated);
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: center;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  padding: 14px 24px;
+  outline: none;
+  transition: border-color var(--t-base), box-shadow var(--t-base);
+  caret-color: var(--c-gold);
+}
+
+.input-tactical::placeholder   { color: var(--c-text-muted); }
+.input-tactical:focus {
+  border-color: var(--c-gold-dim);
+  box-shadow: 0 0 0 3px var(--c-gold-glow);
+}
+
+/* ─── Card táctica ──────────────────────────────────────────────────────── */
+.card-tactical {
+  background: var(--c-bg-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+}
+
+/* ─── Badge de estado ───────────────────────────────────────────────────── */
+.badge-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-green);
+}
+
+.badge-online::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-green);
+  animation: pulse-gold 2s ease-in-out infinite;
+}
+
+/* ─── Línea de escaneo decorativa ───────────────────────────────────────── */
+.scan-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(201, 162, 39, 0.04) 50%,
+    transparent 100%
+  );
+  animation: scan-line 8s linear infinite;
+  pointer-events: none;
+  border-radius: inherit;
+}

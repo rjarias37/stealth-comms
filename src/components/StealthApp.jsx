@@ -2,208 +2,209 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import LoginScreen from './LoginScreen.jsx';
 import CommsRoom from './CommsRoom.jsx';
 
-// ─── Canales disponibles ──────────────────────────────────────────────────────
+// ─── Canales base disponibles ────────────────────────────────────────────────
 const CANALES = ['ALFA', 'BRAVO', 'CHARLIE', 'OMEGA'];
 
-// ─── Wake Lock Hook ───────────────────────────────────────────────────────────
-// Prevents the device screen from sleeping while an active session is running.
+// ─── Sanitización de room codes (espejo del backend) ─────────────────────────
+const ROOM_MAX_LEN = 64;
+function sanitizeRoomCode(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().toUpperCase().slice(0, ROOM_MAX_LEN).replace(/[^A-Z0-9_\-]/g, '');
+}
+
+// ─── Hook: Wake Lock ──────────────────────────────────────────────────────────
 function useWakeLock(isActive) {
-  const wakeLockRef = useRef(null);
+  const ref    = useRef(null);
   const [locked, setLocked] = useState(false);
 
-  const requestWakeLock = async () => {
-    if (!('wakeLock' in navigator)) {
-      console.warn('⚠️ Wake Lock no soportado en este navegador.');
-      return;
-    }
+  const acquire = useCallback(async () => {
+    if (!('wakeLock' in navigator)) return;
     try {
-      wakeLockRef.current = await navigator.wakeLock.request('screen');
+      ref.current = await navigator.wakeLock.request('screen');
       setLocked(true);
-      console.log('🔒 Escudo de pantalla ACTIVO: Bloqueo de suspensión habilitado.');
     } catch (err) {
-      console.error('❌ Error al activar el bloqueo de suspensión:', err.message);
-    }
-  };
-
-  const releaseWakeLock = async () => {
-    if (wakeLockRef.current !== null) {
-      try {
-        await wakeLockRef.current.release();
-        wakeLockRef.current = null;
-        setLocked(false);
-        console.log('🔓 Escudo de pantalla INACTIVO: Bloqueo liberado.');
-      } catch (err) {
-        console.error('❌ Error al liberar el bloqueo:', err.message);
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (isActive) {
-      requestWakeLock();
-    } else {
-      releaseWakeLock();
-    }
-
-    const handleVisibilityChange = async () => {
-      if (isActive && wakeLockRef.current !== null && document.visibilityState === 'visible') {
-        await requestWakeLock();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      releaseWakeLock();
-    };
-  }, [isActive]);
-
-  return locked;
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
-export default function StealthApp() {
-  const [nickname, setNickname] = useState(null);
-  const [roomName, setRoomName] = useState(null);
-  const [token, setToken] = useState(null);
-  const [isLoadingToken, setIsLoadingToken] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-
-  // ─── Canal activo ───────────────────────────────────────────────────────────
-  const [canal, setCanal] = useState('ALFA');
-  // Ref para saber si el cambio de canal es el que disparó una reconexión
-  const isReconnecting = useRef(false);
-
-  // Wake Lock: activo sólo mientras haya sesión en curso
-  const isScreenLocked = useWakeLock(token !== null);
-
-  // ─── Lógica de obtención de token ──────────────────────────────────────────
-  const fetchToken = useCallback(async (name, room) => {
-    setIsLoadingToken(true);
-    setErrorMessage('');
-
-    try {
-      const response = await fetch('/api/getToken', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: name,
-          roomName: room,
-        }),
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.token) {
-        throw new Error(
-          payload.error ?? 'No fue posible obtener el token de acceso.',
-        );
-      }
-
-      setNickname(name);
-      setRoomName(payload.roomName ?? room);
-      setToken(payload.token);
-    } catch (error) {
-      setNickname(null);
-      setRoomName(null);
-      setToken(null);
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : 'Error inesperado al solicitar el token.',
-      );
-    } finally {
-      setIsLoadingToken(false);
+      console.warn('Wake Lock:', err.message);
     }
   }, []);
 
-  // ─── Conexión inicial desde LoginScreen ─────────────────────────────────────
-  // LoginScreen ya no controla el room; el room siempre es el canal activo.
-  const handleConnect = async ({ nickname: name }) => {
-    const cleanedName = typeof name === 'string' ? name.trim() : '';
-    if (!cleanedName) return;
-    await fetchToken(cleanedName, canal);
-  };
+  const release = useCallback(async () => {
+    if (!ref.current) return;
+    try {
+      await ref.current.release();
+      ref.current = null;
+      setLocked(false);
+    } catch (err) {
+      console.warn('Wake Lock release:', err.message);
+    }
+  }, []);
 
-  // ─── Desconexión ───────────────────────────────────────────────────────────
-  const handleDisconnect = () => {
-    setNickname(null);
-    setRoomName(null);
-    setToken(null);
-    setErrorMessage('');
+  useEffect(() => {
+    if (isActive) { acquire(); } else { release(); }
+
+    const onVisibility = () => {
+      if (isActive && document.visibilityState === 'visible') acquire();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      release();
+    };
+  }, [isActive, acquire, release]);
+
+  return locked;
+}
+
+// ─── Estado de sesión inicial ─────────────────────────────────────────────────
+const INITIAL_SESSION = {
+  nickname:  null,
+  roomName:  null,
+  token:     null,
+  loading:   false,
+  error:     '',
+};
+
+// ─── StealthApp ───────────────────────────────────────────────────────────────
+export default function StealthApp() {
+  const [session, setSession]     = useState(INITIAL_SESSION);
+  const [canal, setCanal]         = useState('ALFA');
+  // activeRoom puede ser el canal base o un sub-canal temporal
+  const [activeRoom, setActiveRoom] = useState(null);
+  const isReconnecting            = useRef(false);
+  const isScreenLocked            = useWakeLock(session.token !== null);
+
+  // ─── fetchToken ─────────────────────────────────────────────────────────
+  const fetchToken = useCallback(async (name, room) => {
+    setSession((prev) => ({ ...prev, loading: true, error: '' }));
+
+    try {
+      const res = await fetch('/api/getToken', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ username: name, roomName: room }),
+      });
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload.token) {
+        throw new Error(payload.error ?? 'No fue posible obtener el token.');
+      }
+
+      setSession({
+        nickname: name,
+        roomName: payload.roomName ?? room,
+        token:    payload.token,
+        loading:  false,
+        error:    '',
+      });
+    } catch (err) {
+      setSession({
+        ...INITIAL_SESSION,
+        error: err instanceof Error ? err.message : 'Error inesperado.',
+      });
+    }
+  }, []);
+
+  // ─── Conexión inicial ────────────────────────────────────────────────────
+  const handleConnect = useCallback(({ nickname }) => {
+    const cleanName = typeof nickname === 'string' ? nickname.trim() : '';
+    if (!cleanName) return;
+    const room = sanitizeRoomCode(canal);
+    setActiveRoom(room);
+    fetchToken(cleanName, room);
+  }, [canal, fetchToken]);
+
+  // ─── Desconexión completa ────────────────────────────────────────────────
+  const handleDisconnect = useCallback(() => {
+    setSession(INITIAL_SESSION);
+    setActiveRoom(null);
     isReconnecting.current = false;
-  };
+  }, []);
 
-  // ─── Cambio de canal en caliente ───────────────────────────────────────────
-  const handleCambiarCanal = (nuevoCanal) => {
+  // ─── Cambio de canal base (reconexión automática) ────────────────────────
+  const handleCambiarCanal = useCallback((nuevoCanal) => {
     if (nuevoCanal === canal) return;
-
-    console.log(`📡 Cambiando canal: ${canal} → ${nuevoCanal}`);
     setCanal(nuevoCanal);
 
-    // Si hay sesión activa, marcar para reconexión automática
-    if (token !== null && nickname !== null) {
+    if (session.token !== null && session.nickname !== null) {
       isReconnecting.current = true;
-      // Limpiar sesión actual — el useEffect detectará el cambio y reconectará
-      setToken(null);
-      setRoomName(null);
+      const room = sanitizeRoomCode(nuevoCanal);
+      setActiveRoom(room);
+      setSession((prev) => ({ ...prev, token: null, roomName: null }));
     }
-  };
+  }, [canal, session.token, session.nickname]);
 
-  // ─── Auto-reconexión al cambiar canal ──────────────────────────────────────
-  // Se dispara cuando: (a) canal cambia, (b) token es null pero nickname existe
-  // (lo que indica que fue una desconexión para reconectar, no un logout real).
+  // ─── Auto-reconexión al cambiar canal ───────────────────────────────────
   useEffect(() => {
-    if (isReconnecting.current && nickname !== null && token === null) {
-      console.log(`🔄 Reconectando a canal ${canal} como "${nickname}"...`);
+    if (
+      isReconnecting.current &&
+      session.nickname !== null &&
+      session.token === null &&
+      activeRoom !== null
+    ) {
       isReconnecting.current = false;
-      fetchToken(nickname, canal);
+      fetchToken(session.nickname, activeRoom);
     }
-  }, [canal, token, nickname, fetchToken]);
+  }, [canal, session.token, session.nickname, activeRoom, fetchToken]);
 
-  // ─── Selector de canal (Header táctico) ────────────────────────────────────
-  const ChannelSelector = (
-    <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center py-2 px-4 bg-[#060d1f]/90 backdrop-blur-sm border-b border-[#1e295d]">
-      <div className="flex items-center gap-2 bg-[#121c3a] border border-[#1e295d] rounded-lg px-3 py-1.5 text-xs text-[#00ffcc] font-mono tracking-wider">
-        <span className="animate-pulse text-[#00ffcc] font-bold">📡 CANAL:</span>
+  // ─── Sub-room: cambio de sala sin salir de la sesión ────────────────────
+  const handleRequestSubRoom = useCallback((fullRoomCode) => {
+    const clean = sanitizeRoomCode(fullRoomCode);
+    if (!clean || !session.nickname) return;
+    setActiveRoom(clean);
+    // Recortar sesión actual para forzar nuevo token con el sub-canal
+    isReconnecting.current = true;
+    setSession((prev) => ({ ...prev, token: null, roomName: null }));
+  }, [session.nickname]);
+
+  // ─── Auto-reconexión cuando cambia activeRoom (sub-rooms) ───────────────
+  useEffect(() => {
+    if (
+      isReconnecting.current &&
+      session.nickname !== null &&
+      session.token === null &&
+      activeRoom !== null
+    ) {
+      isReconnecting.current = false;
+      fetchToken(session.nickname, activeRoom);
+    }
+  }, [activeRoom, session.token, session.nickname, fetchToken]);
+
+  // ─── Channel selector (header táctico) ──────────────────────────────────
+  const ChannelHeader = (
+    <div style={hs.bar} aria-label="Selector de canal">
+      <div style={hs.inner}>
+        <span style={hs.label} className="font-mono animate-pulse-gold">📡 CANAL</span>
         <select
           value={canal}
           onChange={(e) => handleCambiarCanal(e.target.value)}
-          className="bg-transparent text-white font-bold outline-none cursor-pointer border-none p-0 focus:ring-0"
+          style={hs.select}
+          className="font-mono"
           aria-label="Selector de canal de comunicaciones"
         >
           {CANALES.map((c) => (
-            <option key={c} value={c} className="bg-[#0a1128] text-white font-mono">
+            <option key={c} value={c} style={{ background: 'var(--c-bg-base)', color: '#fff' }}>
               {c}
             </option>
           ))}
         </select>
       </div>
-
-      {/* Indicador de Wake Lock — sutil, sólo cuando está activo */}
       {isScreenLocked && (
-        <span
-          title="Escudo de pantalla activo"
-          className="absolute right-4 text-[#00ffcc] text-xs font-mono opacity-60 tracking-widest"
-        >
+        <span style={hs.shield} className="font-mono" title="Escudo de pantalla activo">
           🔒 SHIELD
         </span>
       )}
     </div>
   );
 
-  // ─── Render ────────────────────────────────────────────────────────────────
-  if (!nickname || !roomName || !token) {
+  // ─── Render ──────────────────────────────────────────────────────────────
+  if (!session.nickname || !session.roomName || !session.token) {
     return (
       <>
-        {ChannelSelector}
-        {/* Offset para que el header no tape el contenido */}
-        <div className="pt-10">
+        {ChannelHeader}
+        <div style={{ paddingTop: '44px' }}>
           <LoginScreen
             onConnect={handleConnect}
-            isLoading={isLoadingToken}
-            errorMessage={errorMessage}
-            // Pasamos el canal activo para que LoginScreen pueda mostrarlo si lo desea
+            isLoading={session.loading}
+            errorMessage={session.error}
             activeCanal={canal}
           />
         </div>
@@ -213,16 +214,70 @@ export default function StealthApp() {
 
   return (
     <>
-      {ChannelSelector}
-      <div className="pt-10">
+      {ChannelHeader}
+      <div style={{ paddingTop: '44px' }}>
         <CommsRoom
-          nickname={nickname}
-          roomName={roomName}
-          token={token}
+          nickname={session.nickname}
+          roomName={session.roomName}
+          token={session.token}
           serverUrl={import.meta.env.PUBLIC_LIVEKIT_URL}
           onDisconnect={handleDisconnect}
+          onRequestSubRoom={handleRequestSubRoom}
         />
       </div>
     </>
   );
 }
+
+// ─── Estilos del header ───────────────────────────────────────────────────────
+const hs = {
+  bar: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    height: '44px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 16px',
+    background: 'rgba(8,11,18,0.92)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    borderBottom: '1px solid var(--c-border)',
+  },
+  inner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    background: 'var(--c-bg-elevated)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-md)',
+    padding: '4px 14px',
+  },
+  label: {
+    fontSize: '0.625rem',
+    fontWeight: 700,
+    letterSpacing: '0.18em',
+    color: 'var(--c-gold)',
+  },
+  select: {
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    color: 'var(--c-text-primary)',
+    fontWeight: 700,
+    fontSize: '0.75rem',
+    letterSpacing: '0.12em',
+    cursor: 'pointer',
+  },
+  shield: {
+    position: 'absolute',
+    right: '16px',
+    fontSize: '0.5625rem',
+    color: 'var(--c-gold)',
+    letterSpacing: '0.15em',
+    opacity: 0.6,
+  },
+};

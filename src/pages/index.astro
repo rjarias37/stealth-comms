@@ -6,30 +6,40 @@ import "../styles/global.css";
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
-    <meta name="description" content="El Tren de Algarve" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+    <!-- SEO -->
+    <title>Stealth Comms | Red Táctica de Comunicaciones</title>
+    <meta name="description" content="Plataforma SaaS de comunicaciones tácticas de baja latencia. Canales cifrados, sub-salas dinámicas y audio WebRTC en tiempo real." />
+    <meta name="robots" content="noindex, nofollow" />
+
+    <!-- PWA / Tema -->
     <meta name="application-name" content="Stealth Comms" />
-    <meta name="theme-color" content="#0a1128" />
+    <meta name="theme-color" content="#080b12" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta
-      name="apple-mobile-web-app-status-bar-style"
-      content="black-translucent"
-    />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Stealth Comms" />
+
+    <!-- Iconos -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" href="/logo-tren.png" />
     <link rel="apple-touch-icon" href="/logo-tren.png" />
-    <title>Stealth Comms | El Tren de Algarve</title>
+
+    <!-- Preconexión a servicios críticos (Core Web Vitals) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <!-- Registro del Service Worker (PWA) -->
     <script>
-      import { registerSW } from "virtual:pwa-register";
-      registerSW({ immediate: true });
+      if ('serviceWorker' in navigator) {
+        import("virtual:pwa-register").then(({ registerSW }) => {
+          registerSW({ immediate: true });
+        });
+      }
     </script>
   </head>
-  <body class="bg-[#0a1128]">
+  <body>
     <StealthApp client:only="react" />
   </body>
 </html>

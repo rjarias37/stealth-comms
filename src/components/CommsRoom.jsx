@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -7,298 +7,366 @@ import {
   useParticipants,
   useConnectionQualityIndicator,
 } from '@livekit/components-react';
-import { Mic, MicOff, PhoneOff, Headphones, SignalHigh, SignalMedium, SignalLow, AlertTriangle, Radio } from 'lucide-react';
+import {
+  Mic, MicOff, PhoneOff, Headphones,
+  SignalHigh, SignalMedium, SignalLow, AlertTriangle,
+  Radio, Plus, X, Hash,
+} from 'lucide-react';
 
-function getParticipantName(participant) {
-  return participant?.name?.trim() || participant?.identity || 'Invitado';
+// ─── Constantes ──────────────────────────────────────────────────────────────
+const SUBROOM_MAX_LEN = 24;
+const SUBROOM_RE      = /^[A-Z0-9_\-]+$/;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function sanitizeRoomCode(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().toUpperCase().slice(0, SUBROOM_MAX_LEN).replace(/[^A-Z0-9_\-]/g, '');
+}
+
+function getParticipantName(p) {
+  return p?.name?.trim() || p?.identity || 'Operador';
 }
 
 function getInitials(value) {
-  const name = value.trim();
-  if (!name) {
-    return 'NA';
-  }
-
-  const parts = name.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return value.slice(0, 2).toUpperCase();
 }
 
+function getSignalMeta(quality) {
+  switch (quality) {
+    case 'excellent': return { Icon: SignalHigh,   color: 'var(--c-green)' };
+    case 'good':      return { Icon: SignalMedium,  color: 'var(--c-green)' };
+    case 'poor':      return { Icon: SignalLow,     color: 'var(--c-amber)' };
+    default:          return { Icon: AlertTriangle, color: 'var(--c-red)'   };
+  }
+}
+
+// ─── ParticipantRow ───────────────────────────────────────────────────────────
 function ParticipantRow({ participant }) {
   const isSpeaking = useIsSpeaking(participant);
-  const isMuted = !participant.isMicrophoneEnabled;
-  const displayName = getParticipantName(participant);
-  
-  // 📡 Obtenemos la calidad de conexión (Excellent, Good, Poor, Lost)
+  const isMuted    = !participant.isMicrophoneEnabled;
+  const name       = getParticipantName(participant);
   const { quality } = useConnectionQualityIndicator({ participant });
-
-  // Lógica de colores tácticos para la señal
-  const getSignalColor = (q) => {
-    switch (q) {
-      case 'excellent': return 'text-green-500';
-      case 'good': return 'text-green-400';
-      case 'poor': return 'text-yellow-500';
-      default: return 'text-red-500';
-    }
-  };
-
-  // Icono dinámico según la señal
-  const SignalIcon = (() => {
-    switch (quality) {
-      case 'excellent': return SignalHigh;
-      case 'good': return SignalMedium;
-      case 'poor': return SignalLow;
-      default: return AlertTriangle;
-    }
-  })();
+  const { Icon, color } = getSignalMeta(quality);
 
   return (
-    <div className="bg-[#0f172a] rounded-xl p-3 flex items-center justify-between shadow-sm border border-slate-800">
-      <div className="flex items-center gap-3">
-        <div
-          className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
-            isSpeaking ? 'ring-2 ring-green-500 bg-slate-700' : 'bg-slate-700'
-          }`}
-        >
-          {getInitials(displayName)}
-        </div>
-        <div className="flex flex-col">
-          <span className="font-semibold text-sm">{displayName}</span>
-          {/* Indicador visual de señal con ícono dinámico */}
-          <div className={`flex items-center gap-1 text-[10px] ${getSignalColor(quality)} font-bold uppercase`}>
-            <SignalIcon size={10} />
-            {quality}
-          </div>
-        </div>
+    <div style={{
+      ...s.participantRow,
+      ...(isSpeaking ? s.participantRowSpeaking : {}),
+    }}>
+      <div style={{
+        ...s.avatar,
+        ...(isSpeaking ? s.avatarSpeaking : {}),
+      }}>
+        {getInitials(name)}
       </div>
-      {isMuted ? (
-        <MicOff size={18} className="text-red-500" />
-      ) : (
-        <Mic size={18} className="text-slate-400" />
-      )}
+      <div style={s.participantInfo}>
+        <span style={s.participantName}>{name}</span>
+        <span style={{ ...s.signalBadge, color }}>
+          <Icon size={9} />
+          {quality || 'unknown'}
+        </span>
+      </div>
+      <div style={s.micIndicator}>
+        {isMuted
+          ? <MicOff size={14} color="var(--c-red)" />
+          : <Mic    size={14} color="var(--c-text-muted)" />
+        }
+      </div>
     </div>
   );
 }
 
-function CommsRoomUI({ nickname, roomName, onDisconnect }) {
-  const participants = useParticipants();
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
-  const [isUpdatingMic, setIsUpdatingMic] = useState(false);
-  const [isHeadphonesMuted, setIsHeadphonesMuted] = useState(false);
-  const activeRoomName = roomName?.trim() || 'Sala';
+// ─── SubRoomManager — gestión de canales temporales ─────────────────────────
+function SubRoomManager({ baseRoom, onSwitchRoom, activeSubRoom, onCreateSubRoom }) {
+  const [input, setInput]   = useState('');
+  const [error, setError]   = useState('');
+  const inputRef            = useRef(null);
 
-  // 1. Estado para el modo Walkie-Talkie
-  const [isPttMode, setIsPttMode] = useState(false);
-
-  // 2. Función para alternar el modo
-  const handleTogglePttMode = async () => {
-    const nextMode = !isPttMode;
-    setIsPttMode(nextMode);
-    // Seguridad táctica: Si encendemos el modo Walkie-Talkie, apagamos el mic por defecto
-    if (nextMode && localParticipant && isMicrophoneEnabled) {
-      await localParticipant.setMicrophoneEnabled(false);
-    }
+  const handleCreate = () => {
+    const code = sanitizeRoomCode(input);
+    if (!code) { setError('Código inválido.'); return; }
+    if (!SUBROOM_RE.test(code)) { setError('Solo A-Z, 0-9, guión y guión-bajo.'); return; }
+    setError('');
+    setInput('');
+    onCreateSubRoom(code);
   };
 
-  // 3. Efecto para escuchar la Barra Espaciadora SOLO en modo PTT
+  const handleKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); handleCreate(); }
+  };
+
+  const mainRoomCode = sanitizeRoomCode(baseRoom);
+
+  return (
+    <div style={s.subRoomPanel}>
+      <p style={s.subRoomTitle} className="font-mono">SUB-CANALES</p>
+
+      {/* Canal principal */}
+      <button
+        style={{
+          ...s.subRoomChip,
+          ...(activeSubRoom === null ? s.subRoomChipActive : {}),
+        }}
+        onClick={() => onSwitchRoom(null)}
+      >
+        <Hash size={10} />
+        {mainRoomCode}
+        <span style={s.chipMain}>MAIN</span>
+      </button>
+
+      {/* Sub-rooms creados */}
+      {activeSubRoom !== null && (
+        <button
+          style={{ ...s.subRoomChip, ...s.subRoomChipActive }}
+          onClick={() => onSwitchRoom(activeSubRoom)}
+        >
+          <Hash size={10} />
+          {activeSubRoom}
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label="Cerrar sub-canal"
+            style={s.chipClose}
+            onClick={(e) => { e.stopPropagation(); onSwitchRoom(null); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onSwitchRoom(null); } }}
+          >
+            <X size={8} />
+          </span>
+        </button>
+      )}
+
+      {/* Crear nuevo sub-canal */}
+      <div style={s.subRoomInput}>
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => { setInput(sanitizeRoomCode(e.target.value)); setError(''); }}
+          onKeyDown={handleKey}
+          placeholder="NUEVO-CANAL"
+          maxLength={SUBROOM_MAX_LEN}
+          aria-label="Código de nuevo sub-canal"
+          style={s.subRoomTextField}
+          className="font-mono"
+        />
+        <button
+          onClick={handleCreate}
+          disabled={!input.trim()}
+          style={s.subRoomAddBtn}
+          aria-label="Crear sub-canal"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+      {error && <p style={s.subRoomError}>{error}</p>}
+    </div>
+  );
+}
+
+// ─── CommsRoomUI ─────────────────────────────────────────────────────────────
+function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubRoom }) {
+  const participants               = useParticipants();
+  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const [isUpdatingMic, setUpdatingMic]  = useState(false);
+  const [isDeafened, setDeafened]        = useState(false);
+  const [isPttMode, setPttMode]          = useState(false);
+  const [showSubRooms, setShowSubRooms]  = useState(false);
+  const [activeSubRoom, setActiveSubRoom] = useState(null);
+
+  const activeRoomDisplay = sanitizeRoomCode(roomName) || 'CANAL';
+
+  // ─── PTT: modo Walkie-Talkie ────────────────────────────────────────────
+  const handleTogglePtt = useCallback(async () => {
+    const next = !isPttMode;
+    setPttMode(next);
+    if (next && localParticipant && isMicrophoneEnabled) {
+      await localParticipant.setMicrophoneEnabled(false);
+    }
+  }, [isPttMode, localParticipant, isMicrophoneEnabled]);
+
   useEffect(() => {
     if (!isPttMode || !localParticipant) return;
-
-    const handleKeyDown = async (e) => {
+    const onDown = async (e) => {
       if (e.code === 'Space' && !e.repeat && !isUpdatingMic) {
         e.preventDefault();
         await localParticipant.setMicrophoneEnabled(true);
       }
     };
-
-    const handleKeyUp = async (e) => {
+    const onUp = async (e) => {
       if (e.code === 'Space' && !isUpdatingMic) {
         e.preventDefault();
         await localParticipant.setMicrophoneEnabled(false);
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
     };
   }, [isPttMode, localParticipant, isUpdatingMic]);
 
-  const sortedParticipants = useMemo(() => {
-    const sorted = [...participants];
-    const localIdentity = localParticipant?.identity;
-
-    sorted.sort((a, b) => {
-      if (localIdentity && a.identity === localIdentity) {
-        return -1;
-      }
-      if (localIdentity && b.identity === localIdentity) {
-        return 1;
-      }
+  // ─── Participantes ordenados ────────────────────────────────────────────
+  const sorted = useMemo(() => {
+    const list = [...participants];
+    const localId = localParticipant?.identity;
+    list.sort((a, b) => {
+      if (a.identity === localId) return -1;
+      if (b.identity === localId) return  1;
       return getParticipantName(a).localeCompare(getParticipantName(b));
     });
-
-    return sorted;
+    return list;
   }, [participants, localParticipant]);
 
-  const handleDisconnectClick = async () => {
-    if (!localParticipant?.room) {
-      onDisconnect();
-      return;
-    }
-
-    try {
-      await localParticipant.room.disconnect();
-    } catch (error) {
-      console.error('Error disconnecting from LiveKit room:', error);
-      onDisconnect();
-    }
+  // ─── Acciones ───────────────────────────────────────────────────────────
+  const handleDisconnect = async () => {
+    try { await localParticipant?.room?.disconnect(); } catch { /* ignore */ }
+    onDisconnect();
   };
 
   const handleToggleMic = async () => {
-    if (!localParticipant || isUpdatingMic) {
-      return;
-    }
+    if (!localParticipant || isUpdatingMic) return;
+    setUpdatingMic(true);
+    try { await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled); }
+    catch (err) { console.error('Mic toggle error:', err); }
+    finally { setUpdatingMic(false); }
+  };
 
-    setIsUpdatingMic(true);
-    try {
-      await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
-    } catch (error) {
-      console.error('Error toggling microphone state:', error);
-    } finally {
-      setIsUpdatingMic(false);
+  const handleCreateSubRoom = (code) => {
+    setActiveSubRoom(code);
+    onRequestSubRoom(`${sanitizeRoomCode(baseRoom)}-${code}`);
+    setShowSubRooms(false);
+  };
+
+  const handleSwitchRoom = (code) => {
+    if (code === null) {
+      setActiveSubRoom(null);
+      onRequestSubRoom(sanitizeRoomCode(baseRoom));
+    } else {
+      setActiveSubRoom(code);
+      onRequestSubRoom(`${sanitizeRoomCode(baseRoom)}-${code}`);
     }
+    setShowSubRooms(false);
   };
 
   return (
     <>
-      <RoomAudioRenderer muted={isHeadphonesMuted} />
+      <RoomAudioRenderer muted={isDeafened} />
 
-      <div className="w-full max-w-sm sm:max-w-xl md:max-w-4xl transition-all duration-300 flex flex-col h-[700px] bg-[#0f172a] rounded-3xl overflow-hidden shadow-2xl border border-slate-800 relative">
-        <div className="p-6 flex flex-col items-center border-b border-slate-800">
-          <img
-            src="/logo-tren.png"
-            alt="Logo"
-            className="w-24 h-24 object-contain mb-4 drop-shadow-lg"
+      <div style={s.roomWrap} className="card-tactical scan-line">
+        {/* Header */}
+        <div style={s.roomHeader}>
+          <img src="/logo-tren.png" alt="Stealth Comms" style={s.headerLogo} fetchpriority="high" />
+          <div style={s.headerInfo}>
+            <span style={s.roomName} className="font-mono">{activeRoomDisplay}</span>
+            <span className="badge-online font-mono" style={{ fontSize: '0.6rem' }}>
+              {sorted.length} ONLINE
+            </span>
+          </div>
+          <button
+            style={s.subRoomToggle}
+            onClick={() => setShowSubRooms((v) => !v)}
+            aria-label="Gestionar sub-canales"
+            title="Sub-canales"
+          >
+            <Hash size={14} color={showSubRooms ? 'var(--c-gold)' : 'var(--c-text-secondary)'} />
+          </button>
+        </div>
+
+        {/* Sub-room panel (desplegable) */}
+        {showSubRooms && (
+          <SubRoomManager
+            baseRoom={baseRoom}
+            activeSubRoom={activeSubRoom}
+            onSwitchRoom={handleSwitchRoom}
+            onCreateSubRoom={handleCreateSubRoom}
           />
-          <div className="w-full bg-[#e2e8f0] text-[#0f172a] rounded-full py-3 px-6 flex justify-between items-center font-bold">
-            <span>{activeRoomName}</span>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></span>
-              {sortedParticipants.length} online
+        )}
+
+        {/* Lista de participantes */}
+        <div style={s.participantList}>
+          {sorted.length > 0 ? (
+            <div style={s.participantGrid}>
+              {sorted.map((p) => (
+                <ParticipantRow key={p.sid || p.identity} participant={p} />
+              ))}
             </div>
-          </div>
+          ) : (
+            <div style={s.emptyState} className="font-mono">
+              ENLAZANDO COMO {nickname?.toUpperCase()}…
+            </div>
+          )}
         </div>
 
-        <div className="flex-1 p-6 overflow-y-auto bg-slate-200 rounded-t-3xl mt-4 mx-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {sortedParticipants.length > 0 ? (
-              sortedParticipants.map((participant) => (
-                <ParticipantRow
-                  key={participant.sid || participant.identity}
-                  participant={participant}
-                />
-              ))
-            ) : (
-              <div className="bg-[#0f172a] rounded-xl p-3 text-sm text-slate-300 border border-slate-800">
-                Conectando a la sala como {nickname}...
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-[#0f172a] p-4 flex justify-between items-center border-t border-slate-800 pb-8">
-          <div className="flex flex-col items-center">
-            <button
-              onClick={handleDisconnectClick}
-              className="w-12 h-12 bg-[#e2e8f0] rounded-full flex items-center justify-center hover:bg-red-100 transition-colors"
-            >
-              <PhoneOff size={20} className="text-red-600" />
-            </button>
-            <span className="text-[10px] mt-1 text-slate-400 uppercase font-bold">
-              Salir
-            </span>
-          </div>
-
-          {/* Botón Modo Walkie-Talkie */}
-          <div className="flex flex-col items-center">
-            <button
-              onClick={handleTogglePttMode}
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
-                isPttMode 
-                  ? 'bg-green-500 hover:bg-green-600' 
-                  : 'bg-[#e2e8f0] hover:bg-slate-300'
-              }`}
-            >
-              <Radio size={20} className={isPttMode ? 'text-white' : 'text-slate-700'} />
-            </button>
-            <span className="text-[10px] mt-1 text-slate-400 uppercase font-bold">
-              {isPttMode ? 'PTT ON' : 'PTT OFF'}
-            </span>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <button
-              onClick={handleToggleMic}
-              disabled={!localParticipant || isUpdatingMic}
-              className="w-12 h-12 bg-[#e2e8f0] rounded-full flex items-center justify-center hover:bg-slate-300 transition-colors disabled:opacity-60"
-            >
-              {isMicrophoneEnabled ? (
-                <Mic size={20} className="text-slate-700" />
-              ) : (
-                <MicOff size={20} className="text-red-600" />
-              )}
-            </button>
-            <span className="text-[10px] mt-1 text-slate-400 uppercase font-bold">
-              {isMicrophoneEnabled ? 'Mutear' : 'Activar'}
-            </span>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <button
-              onClick={() => setIsHeadphonesMuted((current) => !current)}
-              className="w-12 h-12 bg-[#e2e8f0] rounded-full flex items-center justify-center hover:bg-slate-300 transition-colors"
-            >
-              <Headphones
-                size={20}
-                className={isHeadphonesMuted ? 'text-red-600' : 'text-slate-700'}
-              />
-            </button>
-            <span className="text-[10px] mt-1 text-slate-400 uppercase font-bold">
-              {isHeadphonesMuted ? 'Escuchar' : 'Silenciar'}
-            </span>
-          </div>
+        {/* Barra de controles */}
+        <div style={s.controls}>
+          <ControlBtn
+            id="ctrl-disconnect"
+            onClick={handleDisconnect}
+            label="SALIR"
+            danger
+            icon={<PhoneOff size={18} color="var(--c-red)" />}
+          />
+          <ControlBtn
+            id="ctrl-ptt"
+            onClick={handleTogglePtt}
+            label={isPttMode ? 'PTT ON' : 'PTT OFF'}
+            active={isPttMode}
+            icon={<Radio size={18} color={isPttMode ? 'var(--c-bg-base)' : 'var(--c-text-secondary)'} />}
+          />
+          <ControlBtn
+            id="ctrl-mic"
+            onClick={handleToggleMic}
+            disabled={!localParticipant || isUpdatingMic}
+            label={isMicrophoneEnabled ? 'MUTEAR' : 'ACTIVAR'}
+            icon={isMicrophoneEnabled
+              ? <Mic    size={18} color="var(--c-text-secondary)" />
+              : <MicOff size={18} color="var(--c-red)" />
+            }
+          />
+          <ControlBtn
+            id="ctrl-audio"
+            onClick={() => setDeafened((v) => !v)}
+            label={isDeafened ? 'ESCUCHAR' : 'SILENCIAR'}
+            icon={<Headphones size={18} color={isDeafened ? 'var(--c-red)' : 'var(--c-text-secondary)'} />}
+          />
         </div>
       </div>
     </>
   );
 }
 
-export default function CommsRoom({
-  nickname,
-  roomName,
-  token,
-  serverUrl,
-  onDisconnect,
-}) {
-  const [connectionError, setConnectionError] = useState('');
+// ─── ControlBtn ──────────────────────────────────────────────────────────────
+function ControlBtn({ id, onClick, label, icon, disabled, danger, active }) {
+  const base = {
+    ...s.ctrlBtn,
+    ...(danger  ? s.ctrlBtnDanger  : {}),
+    ...(active  ? s.ctrlBtnActive  : {}),
+    ...(disabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
+  };
+  return (
+    <div style={s.ctrlItem}>
+      <button id={id} onClick={onClick} disabled={disabled} style={base} aria-label={label}>
+        {icon}
+      </button>
+      <span style={s.ctrlLabel} className="font-mono">{label}</span>
+    </div>
+  );
+}
+
+// ─── CommsRoom (export) ──────────────────────────────────────────────────────
+export default function CommsRoom({ nickname, roomName, token, serverUrl, onDisconnect, onRequestSubRoom }) {
+  const [connError, setConnError] = useState('');
 
   if (!serverUrl) {
     return (
-      <div className="min-h-screen bg-[#0a1128] flex flex-col items-center justify-center p-4 font-sans text-white">
-        <p className="text-sm text-red-300 text-center max-w-sm">
-          Falta configurar PUBLIC_LIVEKIT_URL en tu archivo .env.
+      <div style={s.errorPage}>
+        <p style={s.errorText} className="font-mono">
+          ⚠ FALTA PUBLIC_LIVEKIT_URL EN EL ENTORNO
         </p>
-        <button
-          onClick={onDisconnect}
-          className="mt-4 px-4 py-2 bg-[#e2e8f0] text-[#0f172a] rounded-full font-bold"
-        >
-          Volver
+        <button onClick={onDisconnect} className="btn-primary" style={{ marginTop: '16px' }}>
+          VOLVER
         </button>
       </div>
     );
@@ -311,21 +379,306 @@ export default function CommsRoom({
       connect={Boolean(token && serverUrl)}
       audio={true}
       video={false}
-      className="min-h-screen bg-[#0a1128] flex flex-col items-center justify-center p-4 font-sans text-white"
+      style={s.livekitRoot}
       onDisconnected={onDisconnect}
-      onError={(error) => {
-        console.error('LiveKit room error:', error);
-        setConnectionError(error.message);
-      }}
+      onError={(err) => { console.error('LiveKit error:', err); setConnError(err.message); }}
     >
       <CommsRoomUI
         nickname={nickname}
         roomName={roomName}
+        baseRoom={roomName}
         onDisconnect={onDisconnect}
+        onRequestSubRoom={onRequestSubRoom ?? (() => {})}
       />
-      {connectionError ? (
-        <p className="mt-3 text-xs text-red-300">{connectionError}</p>
-      ) : null}
+      {connError && (
+        <p style={{ ...s.errorText, marginTop: '12px' }} role="alert">{connError}</p>
+      )}
     </LiveKitRoom>
   );
 }
+
+// ─── Estilos inline ───────────────────────────────────────────────────────────
+const s = {
+  livekitRoot: {
+    minHeight: '100dvh',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '16px',
+    background: 'var(--c-bg-base)',
+    color: 'var(--c-text-primary)',
+    fontFamily: 'var(--font-sans)',
+  },
+  roomWrap: {
+    width: '100%',
+    maxWidth: '480px',
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: '88dvh',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  roomHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '16px 20px',
+    borderBottom: '1px solid var(--c-border)',
+    background: 'var(--c-bg-surface)',
+    flexShrink: 0,
+  },
+  headerLogo: {
+    width: '36px',
+    height: '36px',
+    objectFit: 'contain',
+    filter: 'drop-shadow(0 0 8px rgba(201,162,39,0.4))',
+  },
+  headerInfo: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '3px',
+    flex: 1,
+  },
+  roomName: {
+    fontSize: '0.875rem',
+    fontWeight: 700,
+    letterSpacing: '0.14em',
+    color: 'var(--c-gold)',
+  },
+  subRoomToggle: {
+    background: 'var(--c-bg-elevated)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-sm)',
+    width: '30px',
+    height: '30px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    flexShrink: 0,
+    transition: 'border-color 220ms ease',
+  },
+  // Sub-room panel
+  subRoomPanel: {
+    padding: '12px 16px',
+    background: 'var(--c-bg-elevated)',
+    borderBottom: '1px solid var(--c-border)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    flexShrink: 0,
+  },
+  subRoomTitle: {
+    fontSize: '0.6rem',
+    fontWeight: 700,
+    letterSpacing: '0.2em',
+    color: 'var(--c-text-muted)',
+  },
+  subRoomChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '5px 10px',
+    background: 'var(--c-bg-surface)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-full)',
+    fontSize: '0.6875rem',
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 600,
+    letterSpacing: '0.1em',
+    color: 'var(--c-text-secondary)',
+    cursor: 'pointer',
+    transition: 'border-color 150ms ease, color 150ms ease',
+    alignSelf: 'flex-start',
+  },
+  subRoomChipActive: {
+    borderColor: 'var(--c-gold-dim)',
+    color: 'var(--c-gold)',
+  },
+  chipMain: {
+    fontSize: '0.5rem',
+    letterSpacing: '0.15em',
+    color: 'var(--c-text-muted)',
+    marginLeft: '2px',
+  },
+  chipClose: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: '2px',
+    opacity: 0.6,
+    cursor: 'pointer',
+  },
+  subRoomInput: {
+    display: 'flex',
+    gap: '6px',
+    marginTop: '4px',
+  },
+  subRoomTextField: {
+    flex: 1,
+    background: 'var(--c-bg-surface)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-sm)',
+    color: 'var(--c-gold)',
+    fontSize: '0.6875rem',
+    padding: '6px 10px',
+    letterSpacing: '0.12em',
+    outline: 'none',
+    caretColor: 'var(--c-gold)',
+  },
+  subRoomAddBtn: {
+    background: 'var(--c-gold)',
+    border: 'none',
+    borderRadius: 'var(--r-sm)',
+    width: '28px',
+    height: '28px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  subRoomError: {
+    fontSize: '0.625rem',
+    color: 'var(--c-red)',
+    fontFamily: 'var(--font-mono)',
+  },
+  // Participant list
+  participantList: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '14px 16px',
+    background: 'var(--c-bg-base)',
+  },
+  participantGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+    gap: '8px',
+  },
+  participantRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    background: 'var(--c-bg-surface)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-md)',
+    padding: '10px 12px',
+    transition: 'border-color 220ms ease',
+  },
+  participantRowSpeaking: {
+    borderColor: 'var(--c-green)',
+  },
+  avatar: {
+    width: '34px',
+    height: '34px',
+    borderRadius: '50%',
+    background: 'var(--c-bg-elevated)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    color: 'var(--c-text-secondary)',
+    flexShrink: 0,
+    transition: 'box-shadow 220ms ease',
+  },
+  avatarSpeaking: {
+    animation: 'speaker-ring 1s ease-in-out infinite',
+    color: 'var(--c-green)',
+  },
+  participantInfo: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    overflow: 'hidden',
+  },
+  participantName: {
+    fontSize: '0.8125rem',
+    fontWeight: 600,
+    color: 'var(--c-text-primary)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  signalBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '3px',
+    fontSize: '0.5625rem',
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+  },
+  micIndicator: { flexShrink: 0 },
+  emptyState: {
+    textAlign: 'center',
+    fontSize: '0.6875rem',
+    color: 'var(--c-text-muted)',
+    letterSpacing: '0.12em',
+    padding: '32px 0',
+  },
+  // Controls
+  controls: {
+    display: 'flex',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    padding: '14px 16px 20px',
+    borderTop: '1px solid var(--c-border)',
+    background: 'var(--c-bg-surface)',
+    flexShrink: 0,
+  },
+  ctrlItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '5px',
+  },
+  ctrlBtn: {
+    width: '46px',
+    height: '46px',
+    borderRadius: '50%',
+    background: 'var(--c-bg-elevated)',
+    border: '1px solid var(--c-border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    transition: 'background 150ms ease, border-color 150ms ease, transform 100ms ease',
+  },
+  ctrlBtnDanger: {
+    borderColor: 'rgba(239,68,68,0.3)',
+    background: 'rgba(239,68,68,0.08)',
+  },
+  ctrlBtnActive: {
+    background: 'var(--c-gold)',
+    borderColor: 'var(--c-gold)',
+  },
+  ctrlLabel: {
+    fontSize: '0.5rem',
+    fontWeight: 700,
+    letterSpacing: '0.12em',
+    color: 'var(--c-text-muted)',
+    textTransform: 'uppercase',
+  },
+  // Error page
+  errorPage: {
+    minHeight: '100dvh',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px',
+    background: 'var(--c-bg-base)',
+  },
+  errorText: {
+    fontSize: '0.75rem',
+    color: 'var(--c-red)',
+    textAlign: 'center',
+    maxWidth: '320px',
+    lineHeight: 1.6,
+    letterSpacing: '0.08em',
+  },
+};
