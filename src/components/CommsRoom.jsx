@@ -7,15 +7,19 @@ import {
   useParticipants,
   useConnectionQualityIndicator,
 } from '@livekit/components-react';
+import { Track } from 'livekit-client';
 import {
   Mic, MicOff, PhoneOff, Headphones,
   SignalHigh, SignalMedium, SignalLow, AlertTriangle,
-  Radio, Plus, X, Hash,
+  Radio, Plus, X, Hash, SlidersHorizontal,
 } from 'lucide-react';
+import { useVoiceProcessor, VOICE_PRESETS } from '../hooks/useVoiceProcessor.js';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const SUBROOM_MAX_LEN = 24;
 const SUBROOM_RE      = /^[A-Z0-9_\-]+$/;
+const PROCESSED_TRACK_NAME = 'stealth-comms-processed-mic';
+const VOICE_PRESET_ORDER = ['clean', 'robot', 'demon', 'small', 'giant', 'elder'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function sanitizeRoomCode(raw) {
@@ -42,7 +46,47 @@ function getSignalMeta(quality) {
   }
 }
 
+function getErrorMessage(error) {
+  if (!error) return '';
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function unpublishProcessedMic(localParticipant, publication, fallbackTrack) {
+  if (!localParticipant || typeof localParticipant.unpublishTrack !== 'function') return;
+
+  const track = publication?.track ?? fallbackTrack;
+  if (track) {
+    await localParticipant.unpublishTrack(track, false);
+  }
+}
+
 // ─── ParticipantRow ───────────────────────────────────────────────────────────
+function formatDb(value) {
+  const numericValue = Number(value);
+  const safeValue = Number.isFinite(numericValue) ? numericValue : 0;
+  return `${safeValue > 0 ? '+' : ''}${safeValue} dB`;
+}
+
+function ManualEqSlider({ label, max, min, onChange, step, value }) {
+  return (
+    <label className="block">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <span className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.12em] text-slate-300">{label}</span>
+        <span className="font-mono text-[0.62rem] font-bold tabular-nums text-amber-300">{formatDb(value)}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-950 accent-[#c9a227] outline-none [box-shadow:inset_0_0_0_1px_rgba(148,163,184,0.18)] [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#c9a227] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#c9a227] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgba(201,162,39,0.18)]"
+      />
+    </label>
+  );
+}
+
 function ParticipantRow({ participant }) {
   const isSpeaking = useIsSpeaking(participant);
   const isMuted    = !participant.isMicrophoneEnabled;
@@ -165,38 +209,272 @@ function SubRoomManager({ baseRoom, onSwitchRoom, activeSubRoom, onCreateSubRoom
 }
 
 // ─── CommsRoomUI ─────────────────────────────────────────────────────────────
+function VoiceProcessorPanel({
+  bassGain,
+  clearMicEnabled,
+  eqGainRange,
+  errorMessage,
+  isMicEnabled,
+  isPublishing,
+  midGain,
+  onBassGainChange,
+  onMidGainChange,
+  onPresetChange,
+  onTrebleGainChange,
+  onToggleClearMic,
+  preset,
+  trebleGain,
+}) {
+  return (
+    <div style={s.voicePanel}>
+      <div style={s.voicePanelHeader}>
+        <div>
+          <p style={s.voicePanelTitle} className="font-mono">AJUSTES DE AUDIO</p>
+          <p style={s.voicePanelStatus} className="font-mono">
+            {isPublishing ? 'PUBLICANDO' : isMicEnabled ? 'PROCESADO ACTIVO' : 'MIC EN SILENCIO'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleClearMic}
+          style={{
+            ...s.voiceSwitch,
+            ...(clearMicEnabled ? s.voiceSwitchActive : {}),
+          }}
+          aria-pressed={clearMicEnabled}
+        >
+          ClearMic {clearMicEnabled ? 'ON' : 'OFF'}
+        </button>
+      </div>
+
+      <div className="rounded-md border border-slate-700/80 bg-slate-950/60 p-3 shadow-inner shadow-black/30">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] text-amber-200">
+            Ecualización Manual
+          </p>
+          <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-slate-500">
+            -12 / +12
+          </span>
+        </div>
+        <div className="grid gap-3">
+          <ManualEqSlider
+            label="Bajos (200Hz)"
+            min={eqGainRange.min}
+            max={eqGainRange.max}
+            step={eqGainRange.step}
+            value={bassGain}
+            onChange={onBassGainChange}
+          />
+          <ManualEqSlider
+            label="Medios (2.5kHz)"
+            min={eqGainRange.min}
+            max={eqGainRange.max}
+            step={eqGainRange.step}
+            value={midGain}
+            onChange={onMidGainChange}
+          />
+          <ManualEqSlider
+            label="Agudos (5kHz)"
+            min={eqGainRange.min}
+            max={eqGainRange.max}
+            step={eqGainRange.step}
+            value={trebleGain}
+            onChange={onTrebleGainChange}
+          />
+        </div>
+      </div>
+
+      <div style={s.voicePresetGrid}>
+        {VOICE_PRESET_ORDER.map((presetId) => {
+          const option = VOICE_PRESETS[presetId];
+          const active = preset === presetId;
+
+          return (
+            <button
+              key={presetId}
+              type="button"
+              onClick={() => onPresetChange(presetId)}
+              style={{
+                ...s.voicePresetBtn,
+                ...(active ? s.voicePresetBtnActive : {}),
+              }}
+              aria-pressed={active}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {errorMessage && (
+        <p style={s.voiceError} className="font-mono" role="alert">
+          {errorMessage}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubRoom }) {
   const participants               = useParticipants();
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const { localParticipant } = useLocalParticipant();
   const [isUpdatingMic, setUpdatingMic]  = useState(false);
   const [isDeafened, setDeafened]        = useState(false);
   const [isPttMode, setPttMode]          = useState(false);
   const [showSubRooms, setShowSubRooms]  = useState(false);
+  const [showVoicePanel, setShowVoicePanel] = useState(false);
   const [activeSubRoom, setActiveSubRoom] = useState(null);
+  const [voicePublication, setVoicePublication] = useState(null);
+  const [isPublishingVoice, setPublishingVoice] = useState(false);
+  const [isProcessedMicEnabled, setProcessedMicEnabled] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
+  const publicationRef = useRef(null);
+  const processedTrackRef = useRef(null);
+  const {
+    bassGain,
+    clearMicEnabled,
+    eqGainRange,
+    error: processorError,
+    midGain,
+    preset,
+    processedTrack,
+    release,
+    requestMicrophoneStream,
+    setBassGain,
+    setClearMicEnabled,
+    setMidGain,
+    setPreset,
+    setTrebleGain,
+    trebleGain,
+  } = useVoiceProcessor({
+    initialClearMicEnabled: true,
+    initialPreset: 'clean',
+  });
 
   const activeRoomDisplay = sanitizeRoomCode(roomName) || 'CANAL';
+  const voiceErrorMessage = voiceError || getErrorMessage(processorError);
+
+  useEffect(() => {
+    processedTrackRef.current = processedTrack;
+  }, [processedTrack]);
+
+  useEffect(() => {
+    if (!localParticipant) return undefined;
+
+    let cancelled = false;
+    const participant = localParticipant;
+
+    const publishProcessedMic = async () => {
+      setPublishingVoice(true);
+      setVoiceError('');
+
+      try {
+        const existingMic = participant.getTrackPublication?.(Track.Source.Microphone);
+        if (existingMic?.track && existingMic.trackName !== PROCESSED_TRACK_NAME) {
+          await participant.unpublishTrack(existingMic.track, true);
+        }
+
+        const result = await requestMicrophoneStream();
+        const trackToPublish = result.processedTrack;
+        if (!trackToPublish) throw new Error('No se pudo crear el track de micrófono procesado.');
+
+        processedTrackRef.current = trackToPublish;
+
+        if (cancelled) {
+          await release({ updateState: false });
+          return;
+        }
+
+        const publication = await participant.publishTrack(trackToPublish, {
+          dtx: true,
+          name: PROCESSED_TRACK_NAME,
+          red: true,
+          source: Track.Source.Microphone,
+          stopMicTrackOnMute: false,
+        });
+
+        if (cancelled) {
+          await unpublishProcessedMic(participant, publication, trackToPublish);
+          await release({ updateState: false });
+          return;
+        }
+
+        publicationRef.current = publication;
+        setVoicePublication(publication);
+        setProcessedMicEnabled(true);
+      } catch (error) {
+        publicationRef.current = null;
+        setVoicePublication(null);
+        setProcessedMicEnabled(false);
+        setVoiceError(getErrorMessage(error));
+        await release().catch(() => {});
+      } finally {
+        if (!cancelled) setPublishingVoice(false);
+      }
+    };
+
+    void publishProcessedMic();
+
+    return () => {
+      cancelled = true;
+      const publication = publicationRef.current;
+      const fallbackTrack = processedTrackRef.current;
+      publicationRef.current = null;
+      processedTrackRef.current = null;
+      void unpublishProcessedMic(participant, publication, fallbackTrack).finally(() => {
+        void release({ updateState: false });
+      });
+    };
+  }, [localParticipant, release, requestMicrophoneStream]);
+
+  const setProcessedMicActive = useCallback(
+    async (enabled) => {
+      if (isUpdatingMic) return;
+
+      const publication = publicationRef.current ?? voicePublication;
+      const track = processedTrackRef.current;
+      if (!publication && !track) return;
+
+      setUpdatingMic(true);
+      try {
+        if (publication) {
+          if (enabled) await publication.unmute();
+          else await publication.mute();
+        }
+
+        if (track) track.enabled = enabled;
+        setProcessedMicEnabled(enabled);
+        setVoiceError('');
+      } catch (error) {
+        setVoiceError(getErrorMessage(error));
+      } finally {
+        setUpdatingMic(false);
+      }
+    },
+    [isUpdatingMic, voicePublication]
+  );
 
   // ─── PTT: modo Walkie-Talkie ────────────────────────────────────────────
   const handleTogglePtt = useCallback(async () => {
     const next = !isPttMode;
     setPttMode(next);
-    if (next && localParticipant && isMicrophoneEnabled) {
-      await localParticipant.setMicrophoneEnabled(false);
+    if (next && isProcessedMicEnabled) {
+      await setProcessedMicActive(false);
     }
-  }, [isPttMode, localParticipant, isMicrophoneEnabled]);
+  }, [isPttMode, isProcessedMicEnabled, setProcessedMicActive]);
 
   useEffect(() => {
-    if (!isPttMode || !localParticipant) return;
+    if (!isPttMode) return;
     const onDown = async (e) => {
       if (e.code === 'Space' && !e.repeat && !isUpdatingMic) {
         e.preventDefault();
-        await localParticipant.setMicrophoneEnabled(true);
+        await setProcessedMicActive(true);
       }
     };
     const onUp = async (e) => {
       if (e.code === 'Space' && !isUpdatingMic) {
         e.preventDefault();
-        await localParticipant.setMicrophoneEnabled(false);
+        await setProcessedMicActive(false);
       }
     };
     window.addEventListener('keydown', onDown);
@@ -205,7 +483,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
     };
-  }, [isPttMode, localParticipant, isUpdatingMic]);
+  }, [isPttMode, isUpdatingMic, setProcessedMicActive]);
 
   // ─── Participantes ordenados ────────────────────────────────────────────
   const sorted = useMemo(() => {
@@ -226,11 +504,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   };
 
   const handleToggleMic = async () => {
-    if (!localParticipant || isUpdatingMic) return;
-    setUpdatingMic(true);
-    try { await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled); }
-    catch (err) { console.error('Mic toggle error:', err); }
-    finally { setUpdatingMic(false); }
+    await setProcessedMicActive(!isProcessedMicEnabled);
   };
 
   const handleCreateSubRoom = (code) => {
@@ -272,6 +546,14 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           >
             <Hash size={14} color={showSubRooms ? 'var(--c-gold)' : 'var(--c-text-secondary)'} />
           </button>
+          <button
+            style={s.subRoomToggle}
+            onClick={() => setShowVoicePanel((v) => !v)}
+            aria-label="Procesador de voz"
+            title="Procesador de voz"
+          >
+            <SlidersHorizontal size={14} color={showVoicePanel ? 'var(--c-gold)' : 'var(--c-text-secondary)'} />
+          </button>
         </div>
 
         {/* Sub-room panel (desplegable) */}
@@ -281,6 +563,25 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             activeSubRoom={activeSubRoom}
             onSwitchRoom={handleSwitchRoom}
             onCreateSubRoom={handleCreateSubRoom}
+          />
+        )}
+
+        {showVoicePanel && (
+          <VoiceProcessorPanel
+            bassGain={bassGain}
+            clearMicEnabled={clearMicEnabled}
+            eqGainRange={eqGainRange}
+            errorMessage={voiceErrorMessage}
+            isMicEnabled={isProcessedMicEnabled}
+            isPublishing={isPublishingVoice}
+            midGain={midGain}
+            preset={preset}
+            trebleGain={trebleGain}
+            onBassGainChange={setBassGain}
+            onMidGainChange={setMidGain}
+            onPresetChange={setPreset}
+            onTrebleGainChange={setTrebleGain}
+            onToggleClearMic={() => setClearMicEnabled((current) => !current)}
           />
         )}
 
@@ -311,6 +612,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           <ControlBtn
             id="ctrl-ptt"
             onClick={handleTogglePtt}
+            disabled={!voicePublication || isPublishingVoice}
             label={isPttMode ? 'PTT ON' : 'PTT OFF'}
             active={isPttMode}
             icon={<Radio size={18} color={isPttMode ? 'var(--c-bg-base)' : 'var(--c-text-secondary)'} />}
@@ -318,9 +620,9 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           <ControlBtn
             id="ctrl-mic"
             onClick={handleToggleMic}
-            disabled={!localParticipant || isUpdatingMic}
-            label={isMicrophoneEnabled ? 'MUTEAR' : 'ACTIVAR'}
-            icon={isMicrophoneEnabled
+            disabled={!voicePublication || isUpdatingMic || isPublishingVoice}
+            label={isProcessedMicEnabled ? 'MUTEAR' : 'ACTIVAR'}
+            icon={isProcessedMicEnabled
               ? <Mic    size={18} color="var(--c-text-secondary)" />
               : <MicOff size={18} color="var(--c-red)" />
             }
@@ -377,7 +679,7 @@ export default function CommsRoom({ nickname, roomName, token, serverUrl, onDisc
       token={token}
       serverUrl={serverUrl}
       connect={Boolean(token && serverUrl)}
-      audio={true}
+      audio={false}
       video={false}
       style={s.livekitRoot}
       onDisconnected={onDisconnect}
@@ -543,6 +845,86 @@ const s = {
     fontSize: '0.625rem',
     color: 'var(--c-red)',
     fontFamily: 'var(--font-mono)',
+  },
+  voicePanel: {
+    padding: '12px 16px 14px',
+    background: 'linear-gradient(180deg, rgba(17,24,39,0.98), rgba(8,11,18,0.98))',
+    borderBottom: '1px solid var(--c-border)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    flexShrink: 0,
+  },
+  voicePanelHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
+  voicePanelTitle: {
+    fontSize: '0.6rem',
+    fontWeight: 700,
+    letterSpacing: '0.2em',
+    color: 'var(--c-gold)',
+  },
+  voicePanelStatus: {
+    marginTop: '3px',
+    fontSize: '0.55rem',
+    fontWeight: 700,
+    letterSpacing: '0.14em',
+    color: 'var(--c-text-muted)',
+  },
+  voiceSwitch: {
+    background: 'var(--c-bg-surface)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-full)',
+    color: 'var(--c-text-secondary)',
+    cursor: 'pointer',
+    flexShrink: 0,
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.56rem',
+    fontWeight: 800,
+    letterSpacing: '0.12em',
+    padding: '7px 10px',
+    textTransform: 'uppercase',
+  },
+  voiceSwitchActive: {
+    background: 'rgba(34,197,94,0.12)',
+    borderColor: 'rgba(34,197,94,0.45)',
+    color: 'var(--c-green)',
+  },
+  voicePresetGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: '6px',
+  },
+  voicePresetBtn: {
+    minHeight: '32px',
+    background: 'var(--c-bg-surface)',
+    border: '1px solid var(--c-border)',
+    borderRadius: 'var(--r-sm)',
+    color: 'var(--c-text-secondary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.58rem',
+    fontWeight: 800,
+    letterSpacing: '0.08em',
+    overflow: 'hidden',
+    padding: '6px 7px',
+    textOverflow: 'ellipsis',
+    textTransform: 'uppercase',
+    whiteSpace: 'nowrap',
+  },
+  voicePresetBtnActive: {
+    background: 'rgba(201,162,39,0.16)',
+    borderColor: 'var(--c-gold-dim)',
+    color: 'var(--c-gold)',
+  },
+  voiceError: {
+    color: 'var(--c-red)',
+    fontSize: '0.6rem',
+    lineHeight: 1.5,
+    letterSpacing: '0.06em',
   },
   // Participant list
   participantList: {
