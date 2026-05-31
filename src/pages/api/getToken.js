@@ -93,6 +93,7 @@ export async function POST({ request }) {
     const accessToken = new AccessToken(apiKey, apiSecret, {
       identity,
       name: cleanedUsername,
+      metadata: JSON.stringify({ nickname: cleanedUsername }),
       ttl: '1h',
     });
 

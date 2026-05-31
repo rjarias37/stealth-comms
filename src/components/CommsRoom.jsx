@@ -27,7 +27,15 @@ function sanitizeRoomCode(raw) {
 }
 
 function getParticipantName(p) {
-  return p?.name?.trim() || p?.identity || 'Operador';
+  let metaName = '';
+  try {
+    if (p?.metadata) {
+      const meta = JSON.parse(p.metadata);
+      if (meta?.nickname) metaName = meta.nickname;
+    }
+  } catch (e) {}
+  
+  return p?.name?.trim() || metaName || p?.identity || 'Operador';
 }
 
 function getInitials(value) {
@@ -86,10 +94,10 @@ function ManualEqSlider({ label, max, min, onChange, step, value }) {
 }
 
 // ─── ParticipantRow ───────────────────────────────────────────────────────────
-function ParticipantRow({ participant }) {
+function ParticipantRow({ participant, localNickname }) {
   const isSpeaking = useIsSpeaking(participant);
   const isMuted    = !participant.isMicrophoneEnabled;
-  const name       = getParticipantName(participant);
+  const name       = localNickname || getParticipantName(participant);
   const { quality } = useConnectionQualityIndicator({ participant });
   const { Icon, color } = getSignalMeta(quality);
 
@@ -740,7 +748,11 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           {sorted.length > 0 ? (
             <div style={s.participantGrid}>
               {sorted.map((p) => (
-                <ParticipantRow key={p.sid || p.identity} participant={p} />
+                <ParticipantRow 
+                  key={p.sid || p.identity} 
+                  participant={p} 
+                  localNickname={p.identity === localParticipant?.identity ? nickname : undefined}
+                />
               ))}
             </div>
           ) : (
