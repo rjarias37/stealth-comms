@@ -1,0 +1,254 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap');
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ZPING — ZERO-LAG VOICE DESIGN SYSTEM
+   Paleta: Dark Space + Cyan Electric + Magenta Accent
+   Estándar: Mobile-First PWA / Core Web Vitals
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Tokens de color ───────────────────────────────────────────────────── */
+:root {
+  /* Fondo */
+  --c-bg-base:      #0A0B0F;
+  --c-bg-surface:   #14161F;
+  --c-bg-elevated:  #1C1F2A;
+  --c-bg-overlay:   #23283A;
+
+  /* Bordes */
+  --c-border:       rgba(240, 242, 245, 0.10);
+  --c-border-soft:  rgba(240, 242, 245, 0.06);
+
+  /* Acentos — cyan eléctrico + magenta */
+  --c-accent-cyan:       #00E5FF;
+  --c-accent-cyan-dim:   #00A3B3;
+  --c-accent-cyan-bright:#33EBFF;
+  --c-accent-magenta:    #B829F7;
+  --c-accent-magenta-dim:#8A1DBF;
+  --c-accent-glow:       rgba(0, 229, 255, 0.25);
+  --c-accent-glow-lg:    rgba(0, 229, 255, 0.12);
+  --c-magenta-glow:      rgba(184, 41, 247, 0.20);
+
+  /* Semáforo */
+  --c-success: #00FF94;
+  --c-warning: #FFB800;
+  --c-error:   #FF4D6D;
+  --c-error-dim: rgba(255, 77, 109, 0.15);
+
+  /* Texto */
+  --c-text-primary:   #F0F2F5;
+  --c-text-secondary: #8B91A7;
+  --c-text-muted:     #5B6275;
+
+  /* Tipografía */
+  --font-display: 'Rajdhani', system-ui, sans-serif;
+  --font-sans:    'Inter', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Courier New', monospace;
+
+  /* Radios */
+  --r-sm:   6px;
+  --r-md:  10px;
+  --r-lg:  16px;
+  --r-xl:  20px;
+  --r-full: 9999px;
+
+  /* Transiciones */
+  --t-fast:   120ms ease;
+  --t-base:   220ms ease;
+  --t-slow:   380ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Reset & base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--c-bg-base);
+  color: var(--c-text-primary);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar         { width: 4px; }
+::-webkit-scrollbar-track   { background: var(--c-bg-base); }
+::-webkit-scrollbar-thumb   { background: var(--c-border); border-radius: var(--r-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--c-accent-cyan-dim); }
+
+/* ─── Animaciones ───────────────────────────────────────────────────────── */
+@keyframes pulse-cyan {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+@keyframes speaker-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.45); }
+  50%       { box-shadow: 0 0 0 6px transparent; }
+}
+
+@keyframes cyan-ring {
+  0%, 100% { box-shadow: 0 0 0 0 var(--c-accent-glow); }
+  50%       { box-shadow: 0 0 0 8px transparent; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ─── Utilidades globales ───────────────────────────────────────────────── */
+.font-display    { font-family: var(--font-display); }
+.font-mono       { font-family: var(--font-mono); }
+.text-accent     { color: var(--c-accent-cyan); }
+.text-accent-bright { color: var(--c-accent-cyan-bright); }
+.text-muted      { color: var(--c-text-muted); }
+.text-secondary  { color: var(--c-text-secondary); }
+.animate-fade-in { animation: fade-in 0.35s var(--t-slow) both; }
+.animate-slide-up { animation: slide-up 0.4s var(--t-slow) both; }
+.animate-pulse-cyan { animation: pulse-cyan 2s ease-in-out infinite; }
+
+/* ─── Componentes base ──────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 28px;
+  background: var(--c-accent-cyan);
+  color: var(--c-bg-base);
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: none;
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: background var(--t-base), transform var(--t-fast), box-shadow var(--t-base);
+  outline: none;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--c-accent-cyan-bright);
+  box-shadow: 0 0 24px var(--c-accent-glow);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: border-color var(--t-base), color var(--t-base), background var(--t-base);
+  outline: none;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--c-accent-cyan-dim);
+  color: var(--c-accent-cyan);
+  background: var(--c-accent-glow-lg);
+}
+
+.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.input-zping {
+  width: 100%;
+  background: var(--c-bg-elevated);
+  color: var(--c-text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: center;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-full);
+  padding: 14px 24px;
+  outline: none;
+  transition: border-color var(--t-base), box-shadow var(--t-base);
+  caret-color: var(--c-accent-cyan);
+}
+
+.input-zping::placeholder   { color: var(--c-text-muted); }
+.input-zping:focus {
+  border-color: var(--c-accent-cyan-dim);
+  box-shadow: 0 0 0 3px var(--c-accent-glow-lg);
+}
+
+/* ─── Card ZPing ────────────────────────────────────────────────────────── */
+.card-zping {
+  background: var(--c-bg-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+/* ─── Badge de estado ───────────────────────────────────────────────────── */
+.badge-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--c-success);
+}
+
+.badge-online::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-success);
+  animation: pulse-cyan 2s ease-in-out infinite;
+}
+
+/* ─── Reduced motion ────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-up,
+  .animate-pulse-cyan,
+  .badge-online::before {
+    animation: none;
+  }
+}

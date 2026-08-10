@@ -1,0 +1,36 @@
+{
+  "name": "stealth-comms",
+  "type": "module",
+  "version": "0.0.1",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/partytown": "^2.1.7",
+    "@astrojs/react": "^5.0.3",
+    "@astrojs/sitemap": "^3.7.3",
+    "@astrojs/vercel": "^10.0.5",
+    "@livekit/components-react": "^2.9.20",
+    "@tailwindcss/vite": "^4.2.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "astro": "^6.1.8",
+    "astro-compress": "^2.4.1",
+    "astro-icon": "^1.1.5",
+    "livekit-client": "^2.18.4",
+    "livekit-server-sdk": "^2.15.1",
+    "lucide-react": "^1.8.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tailwindcss": "^4.2.3"
+  },
+  "devDependencies": {
+    "@vite-pwa/astro": "^1.2.0"
+  }
+}
