@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DebugLog } from './debugLog.js';
 
 export const EQ_GAIN_RANGE = Object.freeze({
   min: -12,
@@ -281,6 +282,12 @@ export function useVoiceProcessor({
 
     graphRef.current = graph;
     if (!isUnmountedRef.current) setIsProcessing(true);
+
+    DebugLog.processor.graphRebuild(
+      clearMicEnabledRef.current,
+      isNativeRobotEnabledRef.current,
+      { bass: eqGainsRef.current.bass, mid: eqGainsRef.current.mid, treble: eqGainsRef.current.treble }
+    );
   }, [disposeGraph, startMicVolumeMeter]);
 
   const updateManualEqGains = useCallback(() => {
@@ -334,7 +341,9 @@ export function useVoiceProcessor({
   const requestMicrophoneStream = useCallback(
     async (constraints = DEFAULT_MIC_CONSTRAINTS) => {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-        throw new Error('La captura de microfono no esta disponible en este navegador.');
+        const err = new Error('La captura de microfono no esta disponible en este navegador.');
+        DebugLog.mic.error(err);
+        throw err;
       }
 
       // Inyectar el deviceId seleccionado en las restricciones de audio
@@ -348,10 +357,14 @@ export function useVoiceProcessor({
           }
         : constraints;
 
+      DebugLog.mic.request(mergedConstraints);
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia(mergedConstraints);
+        DebugLog.mic.gotStream(stream);
         return await attachInputStream(stream, { ownsStream: true });
       } catch (streamError) {
+        DebugLog.mic.error(streamError);
         const message = streamError instanceof Error ? streamError.message : String(streamError);
         if (!isUnmountedRef.current) setError(message);
         throw streamError;
@@ -362,6 +375,7 @@ export function useVoiceProcessor({
 
   const release = useCallback(
     async ({ stopInput = true, updateState = true } = {}) => {
+      DebugLog.mic.release(`stopInput=${stopInput} updateState=${updateState}`);
       disposeGraph();
       sourceRef.current?.disconnect();
       sourceRef.current = null;
@@ -402,6 +416,7 @@ export function useVoiceProcessor({
     setClearMicEnabledState((current) => {
       const enabled = typeof nextEnabled === 'function' ? Boolean(nextEnabled(current)) : Boolean(nextEnabled);
       clearMicEnabledRef.current = enabled;
+      DebugLog.processor.clearMicToggle(enabled);
       return enabled;
     });
   }, []);
@@ -410,6 +425,7 @@ export function useVoiceProcessor({
     setNativeRobotEnabledState((current) => {
       const enabled = typeof nextEnabled === 'function' ? Boolean(nextEnabled(current)) : Boolean(nextEnabled);
       isNativeRobotEnabledRef.current = enabled;
+      DebugLog.processor.robotToggle(enabled);
       return enabled;
     });
   }, []);
@@ -418,6 +434,7 @@ export function useVoiceProcessor({
     setBassGainState((currentGain) => {
       const gain = clampEqGain(typeof nextGain === 'function' ? nextGain(currentGain) : nextGain);
       eqGainsRef.current = { ...eqGainsRef.current, bass: gain };
+      DebugLog.processor.eqChange('bass', gain);
       return gain;
     });
   }, []);
@@ -426,6 +443,7 @@ export function useVoiceProcessor({
     setMidGainState((currentGain) => {
       const gain = clampEqGain(typeof nextGain === 'function' ? nextGain(currentGain) : nextGain);
       eqGainsRef.current = { ...eqGainsRef.current, mid: gain };
+      DebugLog.processor.eqChange('mid', gain);
       return gain;
     });
   }, []);
@@ -434,6 +452,7 @@ export function useVoiceProcessor({
     setTrebleGainState((currentGain) => {
       const gain = clampEqGain(typeof nextGain === 'function' ? nextGain(currentGain) : nextGain);
       eqGainsRef.current = { ...eqGainsRef.current, treble: gain };
+      DebugLog.processor.eqChange('treble', gain);
       return gain;
     });
   }, []);

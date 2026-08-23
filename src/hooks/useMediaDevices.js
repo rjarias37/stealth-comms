@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { DebugLog } from './debugLog.js';
 
 // ─── Persistencia en localStorage ────────────────────────────────────────────
 const STORAGE_KEY_MIC = 'zping_mic_device_id';
@@ -44,10 +45,14 @@ export function useMediaDevices() {
 
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
-      setAudioOutputs(devices.filter((d) => d.kind === 'audiooutput'));
+      const audioInputs = devices.filter((d) => d.kind === 'audioinput');
+      const audioOutputs = devices.filter((d) => d.kind === 'audiooutput');
+      setAudioInputs(audioInputs);
+      setAudioOutputs(audioOutputs);
+      DebugLog.device.enumerate({ audioInputs, audioOutputs });
     } catch (err) {
       console.warn('useMediaDevices: enumerateDevices failed', err);
+      DebugLog.error('DEVICE', 'enumerate failed', err);
     }
   }, []);
 
@@ -57,7 +62,10 @@ export function useMediaDevices() {
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices) return undefined;
 
-    const onChange = () => void enumerate();
+    const onChange = () => {
+      DebugLog.device.devicechange();
+      void enumerate();
+    };
     navigator.mediaDevices.addEventListener?.('devicechange', onChange);
     return () => {
       navigator.mediaDevices.removeEventListener?.('devicechange', onChange);
@@ -65,14 +73,18 @@ export function useMediaDevices() {
   }, [enumerate]);
 
   const switchMicrophone = useCallback((deviceId) => {
+    const device = audioInputs.find((d) => d.deviceId === deviceId);
+    DebugLog.device.selectMic(deviceId, device?.label ?? 'unknown');
     setSelectedMicId(deviceId);
     writeStored(STORAGE_KEY_MIC, deviceId);
-  }, []);
+  }, [audioInputs]);
 
   const switchAudioOutput = useCallback((deviceId) => {
+    const device = audioOutputs.find((d) => d.deviceId === deviceId);
+    DebugLog.device.selectOutput(deviceId, device?.label ?? 'unknown');
     setSelectedOutputId(deviceId);
     writeStored(STORAGE_KEY_OUTPUT, deviceId);
-  }, []);
+  }, [audioOutputs]);
 
   return {
     audioInputs,

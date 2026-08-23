@@ -12,11 +12,14 @@ import {
   Mic, MicOff, PhoneOff, Headphones,
   SignalHigh, SignalMedium, SignalLow, AlertTriangle,
   Radio, Plus, X, Hash, SlidersHorizontal,
+  Bug,
 } from 'lucide-react';
 import { useVoiceProcessor } from '../hooks/useVoiceProcessor.js';
 import { useMediaDevices } from '../hooks/useMediaDevices.js';
+import { DebugLog } from '../hooks/debugLog.js';
 import ZPingLogo from './ZPingLogo.jsx';
 import DeviceSelector from './DeviceSelector.jsx';
+import DebugPanel from './DebugPanel.jsx';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const SUBROOM_MAX_LEN = 24;
@@ -365,6 +368,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   const [isPttMode, setPttMode]          = useState(false);
   const [showSubRooms, setShowSubRooms]  = useState(false);
   const [showVoicePanel, setShowVoicePanel] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [activeSubRoom, setActiveSubRoom] = useState(null);
   const [voicePublication, setVoicePublication] = useState(null);
   const [isPublishingVoice, setPublishingVoice] = useState(false);
@@ -418,12 +422,16 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
       if (typeof element.setSinkId !== 'function') return;
       if (!selectedOutputId) return;
       element.setSinkId(selectedOutputId).catch((err) => {
-        console.warn('setSinkId failed:', err?.message ?? err);
+        DebugLog.audioOutput.setSinkIdError(err, selectedOutputId);
       });
     };
 
     // Aplicar a todos los <audio> existentes
-    document.querySelectorAll('audio').forEach(applySinkId);
+    const audioElements = document.querySelectorAll('audio');
+    audioElements.forEach(applySinkId);
+    if (audioElements.length > 0 && selectedOutputId) {
+      DebugLog.audioOutput.setSinkId(audioElements.length, selectedOutputId);
+    }
 
     // Observar el DOM para aplicar sinkId a nuevos <audio> (nuevos participantes)
     const observer = new MutationObserver((mutations) => {
@@ -527,15 +535,22 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
       setUpdatingMic(true);
       try {
         if (publication) {
-          if (enabled) await publication.unmute();
-          else await publication.mute();
+          if (enabled) {
+            await publication.unmute();
+            DebugLog.track.unmute(track?.id, publication.sid);
+          } else {
+            await publication.mute();
+            DebugLog.track.mute(track?.id, publication.sid);
+          }
         }
 
         if (track) track.enabled = enabled;
         setProcessedMicEnabled(enabled);
         setVoiceError('');
+        DebugLog.track.publish('stealth-comms-processed-mic', 'Microphone', track?.id);
       } catch (error) {
         setVoiceError(getErrorMessage(error));
+        DebugLog.track.unpublish('stealth-comms-processed-mic', track?.id);
       } finally {
         setUpdatingMic(false);
       }
@@ -547,6 +562,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   const handleTogglePtt = useCallback(async () => {
     const next = !isPttMode;
     setPttMode(next);
+    DebugLog.ptt.toggle(next);
     if (next && isProcessedMicEnabled) {
       await setProcessedMicActive(false);
     }
@@ -557,12 +573,14 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     const onDown = async (e) => {
       if (e.code === 'Space' && !e.repeat && !isUpdatingMic) {
         e.preventDefault();
+        DebugLog.ptt.talk(true);
         await setProcessedMicActive(true);
       }
     };
     const onUp = async (e) => {
       if (e.code === 'Space' && !isUpdatingMic) {
         e.preventDefault();
+        DebugLog.ptt.talk(false);
         await setProcessedMicActive(false);
       }
     };
@@ -588,6 +606,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
 
   // ─── Acciones ───────────────────────────────────────────────────────────
   const handleDisconnect = async () => {
+    DebugLog.livekit.disconnected('user disconnect');
     try {
       await localParticipant?.room?.disconnect();
     } catch (error) {
@@ -601,6 +620,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   };
 
   const handleCreateSubRoom = (code) => {
+    DebugLog.subroom.create(code);
     setActiveSubRoom(code);
     onRequestSubRoom(`${sanitizeRoomCode(baseRoom)}-${code}`);
     setShowSubRooms(false);
@@ -608,9 +628,11 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
 
   const handleSwitchRoom = (code) => {
     if (code === null) {
+      DebugLog.subroom.switch(activeSubRoom ?? 'main', 'main');
       setActiveSubRoom(null);
       onRequestSubRoom(sanitizeRoomCode(baseRoom));
     } else {
+      DebugLog.subroom.switch(activeSubRoom ?? 'main', code);
       setActiveSubRoom(code);
       onRequestSubRoom(`${sanitizeRoomCode(baseRoom)}-${code}`);
     }
@@ -646,6 +668,14 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             title="Procesador de voz"
           >
             <SlidersHorizontal size={14} color={showVoicePanel ? 'var(--c-accent-cyan)' : 'var(--c-text-secondary)'} />
+          </button>
+          <button
+            style={s.subRoomToggle}
+            onClick={() => setShowDebugPanel((v) => !v)}
+            aria-label="Debug log"
+            title="Debug log"
+          >
+            <Bug size={14} color={showDebugPanel ? 'var(--c-accent-magenta)' : 'var(--c-text-secondary)'} />
           </button>
         </div>
 
@@ -789,7 +819,23 @@ export default function CommsRoom({ nickname, roomName, token, serverUrl, onDisc
       video={false}
       style={s.livekitRoot}
       onDisconnected={onDisconnect}
-      onError={(err) => { console.error('LiveKit error:', err); setConnError(err.message); }}
+      onConnectionStateChange={(state) => {
+        const states = { 0: 'disconnected', 1: 'connecting', 2: 'connected', 3: 'reconnecting', 4: 'disconnecting' };
+        DebugLog.livekit[states[state] === 'connected' ? 'connected' : states[state] === 'reconnecting' ? 'reconnecting' : 'disconnected'](states[state]);
+      }}
+      onParticipantConnected={(participant) => {
+        const meta = participant?.metadata ? JSON.parse(participant.metadata) : {};
+        DebugLog.participant.joined(participant?.identity, meta?.nickname ?? participant?.name);
+      }}
+      onParticipantDisconnected={(participant) => {
+        const meta = participant?.metadata ? JSON.parse(participant.metadata) : {};
+        DebugLog.participant.left(participant?.identity, meta?.nickname ?? participant?.name);
+      }}
+      onError={(err) => {
+        DebugLog.livekit.error(err);
+        console.error('LiveKit error:', err);
+        setConnError(err.message);
+      }}
     >
       <CommsRoomUI
         nickname={nickname}
