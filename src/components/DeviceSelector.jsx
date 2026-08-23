@@ -5,8 +5,8 @@ import { Mic, Volume2, RefreshCw } from 'lucide-react';
 function getDeviceLabel(device, fallbackIndex) {
   const label = device?.label?.trim();
   if (label) {
-    // Los labels suelen venir como "Nombre (Hardware)": limpiar sufijos comunes
-    return label.replace(/\s*\(.*?\)\s*$/g, '').trim() || label;
+    // Mostrar el nombre exacto que reporta el navegador (incluye paréntesis, modelo, etc.)
+    return label;
   }
   return `Dispositivo ${fallbackIndex}`;
 }
