@@ -213,7 +213,11 @@ const connectManualEqualizer = (context, input, graph, gains, eqNodesRef) => {
   return treble;
 };
 
-export function useVoiceProcessor({ initialClearMicEnabled = true, initialNativeRobotEnabled = false } = {}) {
+export function useVoiceProcessor({
+  initialClearMicEnabled = true,
+  initialNativeRobotEnabled = false,
+  micDeviceId = '',
+} = {}) {
   const [bassGain, setBassGainState] = useState(0);
   const [clearMicEnabled, setClearMicEnabledState] = useState(Boolean(initialClearMicEnabled));
   const [currentVoiceId, setCurrentVoiceId] = useState('nofx');
@@ -425,8 +429,19 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
         throw new Error('La captura de microfono no esta disponible en este navegador.');
       }
 
+      // Inyectar el deviceId seleccionado en las restricciones de audio
+      const mergedConstraints = micDeviceId
+        ? {
+            ...constraints,
+            audio: {
+              ...constraints.audio,
+              deviceId: { exact: micDeviceId },
+            },
+          }
+        : constraints;
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const stream = await navigator.mediaDevices.getUserMedia(mergedConstraints);
         return await attachInputStream(stream, { ownsStream: true });
       } catch (streamError) {
         const message = streamError instanceof Error ? streamError.message : String(streamError);
@@ -434,7 +449,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
         throw streamError;
       }
     },
-    [attachInputStream]
+    [attachInputStream, micDeviceId]
   );
 
   const release = useCallback(
@@ -860,6 +875,7 @@ export function useVoiceProcessor({ initialClearMicEnabled = true, initialNative
     isProcessing,
     isReady,
     isVoicemodConfigured: Boolean(VOICEMOD_CLIENT_KEY),
+    micDeviceId,
     micVolume,
     midGain,
     processedStream,

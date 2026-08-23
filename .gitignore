@@ -25,3 +25,6 @@ pnpm-debug.log*
 
 # Vercel deployment config (local only, never commit)
 .vercel/
+
+.vercel
+.env*

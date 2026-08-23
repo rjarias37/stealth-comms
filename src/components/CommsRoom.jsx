@@ -14,7 +14,9 @@ import {
   Radio, Plus, X, Hash, SlidersHorizontal,
 } from 'lucide-react';
 import { useVoiceProcessor } from '../hooks/useVoiceProcessor.js';
+import { useMediaDevices } from '../hooks/useMediaDevices.js';
 import ZPingLogo from './ZPingLogo.jsx';
+import DeviceSelector from './DeviceSelector.jsx';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 const SUBROOM_MAX_LEN = 24;
@@ -218,6 +220,8 @@ function SubRoomManager({ baseRoom, onSwitchRoom, activeSubRoom, onCreateSubRoom
 
 // ─── CommsRoomUI ─────────────────────────────────────────────────────────────
 function VoiceProcessorPanel({
+  audioInputs,
+  audioOutputs,
   bassGain,
   clearMicEnabled,
   currentVoiceId,
@@ -232,11 +236,16 @@ function VoiceProcessorPanel({
   micVolume,
   midGain,
   onBassGainChange,
+  onMicDeviceChange,
   onMidGainChange,
+  onOutputDeviceChange,
+  onRefreshDevices,
   onRobotToggle,
   onToggleClearMic,
   onTrebleGainChange,
   onVoiceChange,
+  selectedMicId,
+  selectedOutputId,
   trebleGain,
   voicemodStatus,
   voices,
@@ -282,6 +291,17 @@ function VoiceProcessorPanel({
           </p>
         </div>
       </div>
+
+      {/* Selector de dispositivos */}
+      <DeviceSelector
+        audioInputs={audioInputs}
+        audioOutputs={audioOutputs}
+        selectedMicId={selectedMicId}
+        selectedOutputId={selectedOutputId}
+        onMicChange={onMicDeviceChange}
+        onOutputChange={onOutputDeviceChange}
+        onRefresh={onRefreshDevices}
+      />
 
       <section className="rounded-md border border-white/10 bg-z-base/70 p-3 shadow-inner shadow-black/30">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -445,6 +465,18 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
   const [voiceError, setVoiceError] = useState('');
   const processedTrackRef = useRef(null);
   const publicationRef = useRef(null);
+
+  // ─── Dispositivos de audio (micrófono + salida) ──────────────────────────
+  const {
+    audioInputs,
+    audioOutputs,
+    selectedMicId,
+    selectedOutputId,
+    switchMicrophone,
+    switchAudioOutput,
+    refreshDevices,
+  } = useMediaDevices();
+
   const {
     bassGain,
     changeVoicemodVoice,
@@ -470,10 +502,46 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     trebleGain,
     voicemodStatus,
     voices: voicemodVoices,
-  } = useVoiceProcessor();
+  } = useVoiceProcessor({ micDeviceId: selectedMicId });
 
   const activeRoomDisplay = sanitizeRoomCode(roomName) || 'CANAL';
   const voiceErrorMessage = voiceError || getErrorMessage(processorError);
+
+  // ─── Aplicar dispositivo de salida a los <audio> de LiveKit ───────────────
+  // LiveKit's RoomAudioRenderer crea elementos <audio> por cada participante
+  // remoto. Usamos setSinkId() para redirigir el audio al dispositivo elegido.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+
+    const applySinkId = (element) => {
+      if (element.tagName !== 'AUDIO') return;
+      if (typeof element.setSinkId !== 'function') return;
+      if (!selectedOutputId) return;
+      element.setSinkId(selectedOutputId).catch((err) => {
+        console.warn('setSinkId failed:', err?.message ?? err);
+      });
+    };
+
+    // Aplicar a todos los <audio> existentes
+    document.querySelectorAll('audio').forEach(applySinkId);
+
+    // Observar el DOM para aplicar sinkId a nuevos <audio> (nuevos participantes)
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType !== Node.ELEMENT_NODE) return;
+          if (node.tagName === 'AUDIO') {
+            applySinkId(node);
+          } else if (typeof node.querySelectorAll === 'function') {
+            node.querySelectorAll('audio').forEach(applySinkId);
+          }
+        });
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [selectedOutputId]);
 
   useEffect(() => {
     processedTrackRef.current = processedTrack;
@@ -719,6 +787,8 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
 
         {showVoicePanel && (
           <VoiceProcessorPanel
+            audioInputs={audioInputs}
+            audioOutputs={audioOutputs}
             bassGain={bassGain}
             clearMicEnabled={clearMicEnabled}
             currentVoiceId={currentVoiceId}
@@ -732,10 +802,15 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             isPublishing={isPublishingVoice}
             micVolume={micVolume}
             midGain={midGain}
+            selectedMicId={selectedMicId}
+            selectedOutputId={selectedOutputId}
             trebleGain={trebleGain}
             voices={voicemodVoices}
             onBassGainChange={setBassGain}
+            onMicDeviceChange={switchMicrophone}
             onMidGainChange={setMidGain}
+            onOutputDeviceChange={switchAudioOutput}
+            onRefreshDevices={refreshDevices}
             onRobotToggle={() => setNativeRobotEnabled((current) => !current)}
             onToggleClearMic={() => setClearMicEnabled((current) => !current)}
             onTrebleGainChange={setTrebleGain}
