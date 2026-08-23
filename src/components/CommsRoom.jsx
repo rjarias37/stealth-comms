@@ -224,11 +224,8 @@ function VoiceProcessorPanel({
   audioOutputs,
   bassGain,
   clearMicEnabled,
-  currentVoiceId,
   eqGainRange,
   errorMessage,
-  isChangingVoice,
-  isConfigured,
   isLocalProcessing,
   isMicEnabled,
   isNativeRobotEnabled,
@@ -243,37 +240,10 @@ function VoiceProcessorPanel({
   onRobotToggle,
   onToggleClearMic,
   onTrebleGainChange,
-  onVoiceChange,
   selectedMicId,
   selectedOutputId,
   trebleGain,
-  voicemodStatus,
-  voices,
 }) {
-  const isVoicemodDetected = voicemodStatus === 'connected';
-  const isVoicemodChecking = voicemodStatus === 'connecting';
-  const voicemodStatusText = isChangingVoice
-    ? 'CAMBIANDO VOZ'
-    : isVoicemodDetected
-      ? 'VOICEMOD CONECTADO'
-      : isConfigured
-        ? 'SERVICIO LOCAL NO DETECTADO'
-        : 'API KEY FALTANTE';
-  const voicemodBadgeText = isVoicemodDetected
-    ? 'Voicemod Detectado'
-    : isVoicemodChecking
-      ? 'Buscando Voicemod...'
-      : 'Voicemod Offline - Abre la app de escritorio';
-  const voicemodBadgeClass = isVoicemodDetected
-    ? 'border-z-success/40 bg-z-success/10 text-z-success'
-    : isVoicemodChecking
-      ? 'border-z-cyan/40 bg-z-cyan/10 text-z-cyan-bright'
-      : 'border-z-error/40 bg-z-error/10 text-z-error';
-  const voicemodDotClass = isVoicemodDetected
-    ? 'bg-z-success animate-pulse'
-    : isVoicemodChecking
-      ? 'bg-z-warning animate-pulse'
-      : 'bg-z-error';
   const localStatus = isPublishing
     ? 'PUBLICANDO'
     : isMicEnabled
@@ -378,69 +348,6 @@ function VoiceProcessorPanel({
         </button>
       </section>
 
-      <section className="rounded-md border border-z-cyan-dim/30 bg-gray-900 p-3 shadow-inner shadow-black/30">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <div>
-            <p className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.18em] text-z-cyan-bright">
-              INTEGRACION VOICEMOD
-            </p>
-            <p className="mt-1 text-[0.68rem] leading-4 text-z-secondary">
-              Requiere App Desktop
-            </p>
-          </div>
-          <span
-            style={{
-              ...s.voiceSwitch,
-              ...(isVoicemodDetected ? s.voiceSwitchActive : {}),
-              cursor: 'default',
-            }}
-          >
-            V3 API
-          </span>
-        </div>
-        <p className="mb-3 rounded border border-z-cyan-dim/25 bg-black/25 px-2 py-1.5 text-[0.68rem] leading-4 text-z-primary/80">
-          Abre Voicemod en tu PC para usar estos filtros
-        </p>
-        <div
-          className={`mb-3 inline-flex max-w-full items-center gap-2 self-start rounded-full border px-2.5 py-1 font-mono text-[0.56rem] font-bold uppercase tracking-[0.09em] ${voicemodBadgeClass}`}
-          aria-live="polite"
-        >
-          <span className={`h-2 w-2 shrink-0 rounded-full ${voicemodDotClass}`} />
-          <span className="truncate">{voicemodBadgeText}</span>
-        </div>
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-z-muted">
-            {voicemodStatusText}
-          </span>
-          <span className="font-mono text-[0.55rem] font-bold uppercase tracking-[0.12em] text-z-muted">
-            CONTROL REMOTO
-          </span>
-        </div>
-        <div style={s.voicePresetGrid}>
-          {voices.map((voice) => {
-            const active = currentVoiceId === voice.id;
-            const disabled = !isConfigured || !isVoicemodDetected || isChangingVoice || voice.enabled === false;
-
-            return (
-              <button
-                key={voice.id}
-                type="button"
-                onClick={() => onVoiceChange(voice.id)}
-                disabled={disabled}
-                style={{
-                  ...s.voicePresetBtn,
-                  ...(active ? s.voicePresetBtnActive : {}),
-                  ...(disabled ? s.voicePresetBtnDisabled : {}),
-                }}
-                aria-pressed={active}
-              >
-                {voice.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
       {errorMessage && (
         <p style={s.voiceError} className="font-mono" role="alert">
           {errorMessage}
@@ -479,19 +386,14 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
 
   const {
     bassGain,
-    changeVoicemodVoice,
     clearMicEnabled,
-    currentVoiceId,
-    eqGainRange,
     error: processorError,
-    isChangingVoice,
+    eqGainRange,
     isNativeRobotEnabled,
     isProcessing: isLocalProcessing,
-    isVoicemodConfigured,
     micVolume,
     midGain,
     processedTrack,
-    refreshVoicemodVoices,
     release,
     requestMicrophoneStream,
     setBassGain,
@@ -500,8 +402,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     setNativeRobotEnabled,
     setTrebleGain,
     trebleGain,
-    voicemodStatus,
-    voices: voicemodVoices,
   } = useVoiceProcessor({ micDeviceId: selectedMicId });
 
   const activeRoomDisplay = sanitizeRoomCode(roomName) || 'CANAL';
@@ -616,20 +516,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
     };
   }, [localParticipant, release, requestMicrophoneStream]);
 
-  useEffect(() => {
-    if (!showVoicePanel || !isVoicemodConfigured || voicemodStatus !== 'connected') return undefined;
-
-    let cancelled = false;
-    setVoiceError('');
-    refreshVoicemodVoices().catch((error) => {
-      if (!cancelled) setVoiceError(getErrorMessage(error));
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isVoicemodConfigured, refreshVoicemodVoices, showVoicePanel, voicemodStatus]);
-
   const setProcessedMicActive = useCallback(
     async (enabled) => {
       if (isUpdatingMic) return;
@@ -687,18 +573,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
       window.removeEventListener('keyup', onUp);
     };
   }, [isPttMode, isUpdatingMic, setProcessedMicActive]);
-
-  const handleVoiceChange = useCallback(
-    async (voiceId) => {
-      setVoiceError('');
-      try {
-        await changeVoicemodVoice(voiceId);
-      } catch (error) {
-        setVoiceError(getErrorMessage(error));
-      }
-    },
-    [changeVoicemodVoice]
-  );
 
   // ─── Participantes ordenados ────────────────────────────────────────────
   const sorted = useMemo(() => {
@@ -791,11 +665,8 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             audioOutputs={audioOutputs}
             bassGain={bassGain}
             clearMicEnabled={clearMicEnabled}
-            currentVoiceId={currentVoiceId}
             eqGainRange={eqGainRange}
             errorMessage={voiceErrorMessage}
-            isChangingVoice={isChangingVoice}
-            isConfigured={isVoicemodConfigured}
             isLocalProcessing={isLocalProcessing}
             isMicEnabled={isProcessedMicEnabled}
             isNativeRobotEnabled={isNativeRobotEnabled}
@@ -805,7 +676,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             selectedMicId={selectedMicId}
             selectedOutputId={selectedOutputId}
             trebleGain={trebleGain}
-            voices={voicemodVoices}
             onBassGainChange={setBassGain}
             onMicDeviceChange={switchMicrophone}
             onMidGainChange={setMidGain}
@@ -814,8 +684,6 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             onRobotToggle={() => setNativeRobotEnabled((current) => !current)}
             onToggleClearMic={() => setClearMicEnabled((current) => !current)}
             onTrebleGainChange={setTrebleGain}
-            onVoiceChange={handleVoiceChange}
-            voicemodStatus={voicemodStatus}
           />
         )}
 
@@ -1151,37 +1019,6 @@ const s = {
     background: 'rgba(0,229,255,0.16)',
     borderColor: 'var(--c-accent-cyan-dim)',
     color: 'var(--c-accent-cyan)',
-  },
-  voicePresetGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-    gap: '6px',
-  },
-  voicePresetBtn: {
-    minHeight: '32px',
-    background: 'var(--c-bg-surface)',
-    border: '1px solid var(--c-border)',
-    borderRadius: 'var(--r-sm)',
-    color: 'var(--c-text-secondary)',
-    cursor: 'pointer',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '0.58rem',
-    fontWeight: 800,
-    letterSpacing: '0.08em',
-    overflow: 'hidden',
-    padding: '6px 7px',
-    textOverflow: 'ellipsis',
-    textTransform: 'uppercase',
-    whiteSpace: 'nowrap',
-  },
-  voicePresetBtnActive: {
-    background: 'rgba(0,229,255,0.16)',
-    borderColor: 'var(--c-accent-cyan-dim)',
-    color: 'var(--c-accent-cyan)',
-  },
-  voicePresetBtnDisabled: {
-    cursor: 'not-allowed',
-    opacity: 0.45,
   },
   voiceError: {
     color: 'var(--c-red)',

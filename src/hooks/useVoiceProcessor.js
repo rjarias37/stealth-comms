@@ -1,18 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-const VOICEMOD_VOICE_PRESETS = Object.freeze([
-  { id: 'nofx', label: 'Clean', aliases: ['nofx', 'no fx', 'clean'] },
-  { id: 'robot', label: 'Robot', aliases: ['robot'] },
-  { id: 'demon', label: 'Demon', aliases: ['demon'] },
-  { id: 'magic-chords', label: 'Magic Chords', aliases: ['magic chords', 'magic-chords', 'magicchords'] },
-  { id: 'little-kevin', label: 'Little Kevin', aliases: ['little kevin', 'little-kevin', 'littlekevin'] },
-  { id: 'titan', label: 'Titan', aliases: ['titan'] },
-]);
-
-export const VOICEMOD_VOICES = Object.freeze(
-  VOICEMOD_VOICE_PRESETS.map(({ id, label }) => ({ id, label, enabled: true }))
-);
-
 export const EQ_GAIN_RANGE = Object.freeze({
   min: -12,
   max: 12,
@@ -29,29 +16,12 @@ const DEFAULT_MIC_CONSTRAINTS = Object.freeze({
   video: false,
 });
 
-const EMPTY_GRAPH = Object.freeze({
-  nodes: [],
-  stoppables: [],
-});
+const EMPTY_GRAPH = Object.freeze({ nodes: [], stoppables: [] });
 
-const VOICEMOD_WS_URL = 'ws://localhost:59129/v1/';
-const VOICEMOD_HEALTH_URL = 'http://localhost:59129/v1/';
-const VOICEMOD_HEALTH_INTERVAL_MS = 5000;
-const VOICEMOD_HEALTH_TIMEOUT_MS = 1800;
-const VOICEMOD_REQUEST_TIMEOUT_MS = 5000;
-const VOICEMOD_CLIENT_KEY = import.meta.env.PUBLIC_VOICEMOD_CLIENT_KEY?.trim() ?? '';
-
-const createActionId = () => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-
-  return `stealth-comms-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-};
+// ─── Helpers de Web Audio API ────────────────────────────────────────────────
 
 const getAudioContextConstructor = () => {
   if (typeof window === 'undefined') return null;
-
   const audioWindow = window;
   return audioWindow.AudioContext || audioWindow.webkitAudioContext || null;
 };
@@ -80,64 +50,7 @@ const stopStreamTracks = (stream) => {
   });
 };
 
-const parseVoicemodMessage = (event) => {
-  if (typeof event.data !== 'string') return null;
-
-  try {
-    return JSON.parse(event.data);
-  } catch {
-    return null;
-  }
-};
-
-const getResponseId = (message) => message?.actionID ?? message?.actionId ?? message?.id ?? null;
-
-const getVoiceIdFromMessage = (message) =>
-  message?.actionObject?.voiceID ?? message?.actionObject?.voiceId ?? message?.actionObject?.currentVoice ?? null;
-
-const normalizeVoiceKey = (value) =>
-  typeof value === 'string' ? value.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-
-const mapVoicemodPresetVoices = (remoteVoices) => {
-  if (!Array.isArray(remoteVoices) || remoteVoices.length === 0) return VOICEMOD_VOICES;
-
-  return VOICEMOD_VOICE_PRESETS.map((preset) => {
-    const aliasKeys = preset.aliases.map(normalizeVoiceKey);
-    const match = remoteVoices.find((voice) => {
-      const remoteKeys = [voice?.id, voice?.friendlyName, voice?.name].map(normalizeVoiceKey);
-      return aliasKeys.some((aliasKey) => remoteKeys.includes(aliasKey));
-    });
-
-    return {
-      id: match?.id ?? preset.id,
-      label: preset.label,
-      enabled: match?.enabled !== false,
-    };
-  });
-};
-
-const getVoicemodErrorMessage = (message) => {
-  if (!message) return '';
-  const payloadStatus = message.payload?.status;
-  const actionStatus = message.actionObject?.status;
-  if (Number(payloadStatus?.code) >= 400) return payloadStatus.description ?? 'Voicemod rechazo la autorizacion.';
-  if (Number(actionStatus?.code) >= 400) return actionStatus.description ?? 'Voicemod rechazo la accion.';
-  if (typeof message.error === 'string') return message.error;
-  if (typeof message.message === 'string' && Number(message.statusCode) >= 400) return message.message;
-  if (typeof message.actionObject?.error === 'string') return message.actionObject.error;
-  if (typeof message.actionObject?.message === 'string' && Number(message.actionObject?.statusCode) >= 400) {
-    return message.actionObject.message;
-  }
-  return '';
-};
-
-const rejectPendingRequests = (pendingRequests, error) => {
-  pendingRequests.forEach(({ reject, timeoutId }) => {
-    clearTimeout(timeoutId);
-    reject(error);
-  });
-  pendingRequests.clear();
-};
+// ─── Nodos de procesamiento de audio ─────────────────────────────────────────
 
 const connectClearMicEqualizer = (context, input, graph) => {
   const highpass = context.createBiquadFilter();
@@ -213,6 +126,8 @@ const connectManualEqualizer = (context, input, graph, gains, eqNodesRef) => {
   return treble;
 };
 
+// ─── Hook principal ──────────────────────────────────────────────────────────
+
 export function useVoiceProcessor({
   initialClearMicEnabled = true,
   initialNativeRobotEnabled = false,
@@ -220,10 +135,7 @@ export function useVoiceProcessor({
 } = {}) {
   const [bassGain, setBassGainState] = useState(0);
   const [clearMicEnabled, setClearMicEnabledState] = useState(Boolean(initialClearMicEnabled));
-  const [currentVoiceId, setCurrentVoiceId] = useState('nofx');
   const [error, setError] = useState('');
-  const [isChangingVoice, setChangingVoice] = useState(false);
-  const [isConnected, setConnected] = useState(false);
   const [isNativeRobotEnabled, setNativeRobotEnabledState] = useState(Boolean(initialNativeRobotEnabled));
   const [isProcessing, setIsProcessing] = useState(false);
   const [isReady, setIsReady] = useState(false);
@@ -231,8 +143,6 @@ export function useVoiceProcessor({
   const [midGain, setMidGainState] = useState(0);
   const [processedStream, setProcessedStream] = useState(null);
   const [trebleGain, setTrebleGainState] = useState(0);
-  const [voicemodStatus, setVoicemodStatus] = useState('connecting');
-  const [voices, setVoices] = useState(VOICEMOD_VOICES);
 
   const analyserDataRef = useRef(null);
   const analyserFrameRef = useRef(null);
@@ -247,12 +157,9 @@ export function useVoiceProcessor({
   const isNativeRobotEnabledRef = useRef(isNativeRobotEnabled);
   const isUnmountedRef = useRef(false);
   const ownsInputStreamRef = useRef(false);
-  const pendingRequestsRef = useRef(new Map());
-  const registerPromiseRef = useRef(null);
-  const registerResolverRef = useRef(null);
   const sourceRef = useRef(null);
-  const websocketRef = useRef(null);
 
+  // ─── Medidor de volumen del micrófono ───────────────────────────────────
   const stopMicVolumeMeter = useCallback((resetVolume = false) => {
     if (typeof window !== 'undefined' && analyserFrameRef.current !== null) {
       window.cancelAnimationFrame(analyserFrameRef.current);
@@ -298,9 +205,9 @@ export function useVoiceProcessor({
     analyserFrameRef.current = window.requestAnimationFrame(updateVolume);
   }, [stopMicVolumeMeter]);
 
+  // ─── Gestión del grafo de audio ─────────────────────────────────────────
   const disposeGraph = useCallback(() => {
     stopMicVolumeMeter();
-    sourceRef.current?.disconnect();
 
     graphRef.current.stoppables.forEach((node) => {
       try {
@@ -374,7 +281,7 @@ export function useVoiceProcessor({
 
     graphRef.current = graph;
     if (!isUnmountedRef.current) setIsProcessing(true);
-  }, [disposeGraph]);
+  }, [disposeGraph, startMicVolumeMeter]);
 
   const updateManualEqGains = useCallback(() => {
     const context = contextRef.current;
@@ -386,6 +293,7 @@ export function useVoiceProcessor({
     if (treble) rampAudioParam(treble.gain, eqGainsRef.current.treble, context);
   }, []);
 
+  // ─── Gestión del stream de entrada ──────────────────────────────────────
   const attachInputStream = useCallback(
     async (stream, { ownsStream = false } = {}) => {
       const audioTrack = stream?.getAudioTracks?.()[0];
@@ -489,6 +397,7 @@ export function useVoiceProcessor({
     if (context.state === 'suspended') await context.resume();
   }, [ensureAudioContext]);
 
+  // ─── Setters ────────────────────────────────────────────────────────────
   const setClearMicEnabled = useCallback((nextEnabled) => {
     setClearMicEnabledState((current) => {
       const enabled = typeof nextEnabled === 'function' ? Boolean(nextEnabled(current)) : Boolean(nextEnabled);
@@ -529,309 +438,15 @@ export function useVoiceProcessor({
     });
   }, []);
 
-  const handleVoicemodMessage = useCallback((message) => {
-    const messageError = getVoicemodErrorMessage(message);
-    const responseId = getResponseId(message);
-
-    if (messageError) {
-      if (responseId && pendingRequestsRef.current.has(responseId)) {
-        const pending = pendingRequestsRef.current.get(responseId);
-        clearTimeout(pending.timeoutId);
-        pending.reject(new Error(messageError));
-        pendingRequestsRef.current.delete(responseId);
-      }
-      if (!isUnmountedRef.current) setError(messageError);
-      return;
-    }
-
-    if (registerResolverRef.current) {
-      registerResolverRef.current();
-      registerResolverRef.current = null;
-      if (!isUnmountedRef.current) {
-        setConnected(true);
-        setVoicemodStatus('connected');
-      }
-    }
-
-    const voiceId = getVoiceIdFromMessage(message);
-    if (voiceId && !isUnmountedRef.current) {
-      setCurrentVoiceId(voiceId);
-    }
-
-    if (message?.actionType === 'getVoices') {
-      const remoteVoices = message?.actionObject?.voices;
-      if (Array.isArray(remoteVoices) && !isUnmountedRef.current) {
-        setVoices(mapVoicemodPresetVoices(remoteVoices));
-      }
-
-      pendingRequestsRef.current.forEach((pending, requestId) => {
-        if (pending.action === 'getVoices') {
-          clearTimeout(pending.timeoutId);
-          pending.resolve(message);
-          pendingRequestsRef.current.delete(requestId);
-        }
-      });
-    }
-
-    if (message?.actionType === 'voiceChangedEvent') {
-      pendingRequestsRef.current.forEach((pending, requestId) => {
-        if (pending.action === 'loadVoice' && (!pending.voiceId || pending.voiceId === voiceId)) {
-          clearTimeout(pending.timeoutId);
-          pending.resolve(message);
-          pendingRequestsRef.current.delete(requestId);
-        }
-      });
-      return;
-    }
-
-    if (responseId && pendingRequestsRef.current.has(responseId)) {
-      const pending = pendingRequestsRef.current.get(responseId);
-      clearTimeout(pending.timeoutId);
-      pending.resolve(message);
-      pendingRequestsRef.current.delete(responseId);
-    }
-  }, []);
-
-  const connectVoicemod = useCallback(async () => {
-    if (!VOICEMOD_CLIENT_KEY) {
-      throw new Error('PUBLIC_VOICEMOD_CLIENT_KEY no esta configurada.');
-    }
-
-    if (typeof WebSocket === 'undefined') {
-      throw new Error('WebSocket no esta disponible en este navegador.');
-    }
-
-    if (!isUnmountedRef.current) setVoicemodStatus('connecting');
-
-    const existingSocket = websocketRef.current;
-    if (existingSocket?.readyState === WebSocket.OPEN) {
-      return existingSocket;
-    }
-
-    if (registerPromiseRef.current) {
-      await registerPromiseRef.current;
-      return websocketRef.current;
-    }
-
-    const socket = new WebSocket(VOICEMOD_WS_URL);
-    websocketRef.current = socket;
-
-    registerPromiseRef.current = new Promise((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => {
-        registerResolverRef.current = null;
-        registerPromiseRef.current = null;
-        if (!isUnmountedRef.current) {
-          setConnected(false);
-          setVoicemodStatus('disconnected');
-        }
-        reject(new Error('Voicemod no respondio al registro del cliente.'));
-      }, VOICEMOD_REQUEST_TIMEOUT_MS);
-
-      registerResolverRef.current = () => {
-        clearTimeout(timeoutId);
-        registerPromiseRef.current = null;
-        resolve();
-      };
-
-      socket.addEventListener('open', () => {
-        socket.send(
-          JSON.stringify({
-            action: 'registerClient',
-            id: createActionId(),
-            payload: {
-              clientKey: VOICEMOD_CLIENT_KEY,
-            },
-          })
-        );
-      });
-
-      socket.addEventListener('message', (event) => {
-        const message = parseVoicemodMessage(event);
-        if (message) handleVoicemodMessage(message);
-      });
-
-      socket.addEventListener('error', () => {
-        clearTimeout(timeoutId);
-        registerResolverRef.current = null;
-        registerPromiseRef.current = null;
-        if (!isUnmountedRef.current) {
-          setConnected(false);
-          setVoicemodStatus('disconnected');
-        }
-        reject(new Error('No fue posible conectar con Voicemod en localhost.'));
-      });
-
-      socket.addEventListener('close', () => {
-        clearTimeout(timeoutId);
-        registerResolverRef.current = null;
-        registerPromiseRef.current = null;
-        websocketRef.current = null;
-        if (!isUnmountedRef.current) {
-          setConnected(false);
-          setVoicemodStatus('disconnected');
-        }
-        rejectPendingRequests(pendingRequestsRef.current, new Error('La conexion con Voicemod se cerro.'));
-      });
-    });
-
-    await registerPromiseRef.current;
-    return socket;
-  }, [handleVoicemodMessage]);
-
-  const sendVoicemodAction = useCallback(
-    async (action, payload, options = {}) => {
-      const socket = await connectVoicemod();
-      const requestId = createActionId();
-
-      return new Promise((resolve, reject) => {
-        const timeoutId = window.setTimeout(() => {
-          pendingRequestsRef.current.delete(requestId);
-          reject(new Error(`Voicemod no confirmo la accion ${action}.`));
-        }, VOICEMOD_REQUEST_TIMEOUT_MS);
-
-        pendingRequestsRef.current.set(requestId, {
-          action,
-          reject,
-          resolve,
-          timeoutId,
-          voiceId: options.voiceId ?? null,
-        });
-
-        socket.send(
-          JSON.stringify({
-            action,
-            id: requestId,
-            payload,
-          })
-        );
-      });
-    },
-    [connectVoicemod]
-  );
-
-  const refreshVoicemodVoices = useCallback(async () => {
-    if (!isUnmountedRef.current) setError('');
-
-    try {
-      return await sendVoicemodAction('getVoices', {});
-    } catch (voicesError) {
-      const message = voicesError instanceof Error ? voicesError.message : String(voicesError);
-      if (!isUnmountedRef.current) setError(message);
-      throw voicesError;
-    }
-  }, [sendVoicemodAction]);
-
-  const changeVoicemodVoice = useCallback(
-    async (voiceId) => {
-      const cleanVoiceId = typeof voiceId === 'string' ? voiceId.trim() : '';
-      if (!cleanVoiceId) {
-        throw new Error('voiceId es obligatorio para cambiar la voz de Voicemod.');
-      }
-
-      if (!isUnmountedRef.current) {
-        setChangingVoice(true);
-        setError('');
-      }
-
-      try {
-        const response = await sendVoicemodAction(
-          'loadVoice',
-          {
-            voiceID: cleanVoiceId,
-          },
-          {
-            voiceId: cleanVoiceId,
-          }
-        );
-        if (!isUnmountedRef.current) setCurrentVoiceId(cleanVoiceId);
-        return response;
-      } catch (voiceError) {
-        const message = voiceError instanceof Error ? voiceError.message : String(voiceError);
-        if (!isUnmountedRef.current) setError(message);
-        throw voiceError;
-      } finally {
-        if (!isUnmountedRef.current) setChangingVoice(false);
-      }
-    },
-    [sendVoicemodAction]
-  );
-
+  // ─── Derivados ──────────────────────────────────────────────────────────
   const processedTrack = useMemo(() => processedStream?.getAudioTracks()[0] ?? null, [processedStream]);
 
+  // ─── Effects ────────────────────────────────────────────────────────────
   useEffect(() => {
     clearMicEnabledRef.current = clearMicEnabled;
     isNativeRobotEnabledRef.current = isNativeRobotEnabled;
     rebuildGraph();
   }, [clearMicEnabled, isNativeRobotEnabled, rebuildGraph]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined;
-
-    let cancelled = false;
-    let activeController = null;
-    let activeTimeoutId = null;
-
-    const clearActiveRequest = () => {
-      if (activeTimeoutId) {
-        window.clearTimeout(activeTimeoutId);
-        activeTimeoutId = null;
-      }
-      activeController = null;
-    };
-
-    const runHealthCheck = async () => {
-      if (cancelled) return;
-
-      if (typeof fetch !== 'function') {
-        setVoicemodStatus('disconnected');
-        setConnected(false);
-        return;
-      }
-
-      setVoicemodStatus((currentStatus) => (currentStatus === 'connected' ? 'connected' : 'connecting'));
-
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      activeController = controller;
-
-      if (controller) {
-        activeTimeoutId = window.setTimeout(() => {
-          controller.abort();
-        }, VOICEMOD_HEALTH_TIMEOUT_MS);
-      }
-
-      try {
-        await fetch(VOICEMOD_HEALTH_URL, {
-          cache: 'no-store',
-          method: 'GET',
-          mode: 'no-cors',
-          signal: controller?.signal,
-        });
-
-        if (!cancelled) {
-          setVoicemodStatus('connected');
-        }
-      } catch {
-        if (!cancelled) {
-          setVoicemodStatus('disconnected');
-          setConnected(false);
-        }
-      } finally {
-        clearActiveRequest();
-      }
-    };
-
-    void runHealthCheck();
-    const intervalId = window.setInterval(() => {
-      void runHealthCheck();
-    }, VOICEMOD_HEALTH_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      if (activeTimeoutId) window.clearTimeout(activeTimeoutId);
-      activeController?.abort();
-    };
-  }, []);
 
   useEffect(() => {
     eqGainsRef.current = {
@@ -847,16 +462,6 @@ export function useVoiceProcessor({
 
     return () => {
       isUnmountedRef.current = true;
-      registerResolverRef.current = null;
-      registerPromiseRef.current = null;
-      rejectPendingRequests(pendingRequestsRef.current, new Error('La conexion con Voicemod se cerro.'));
-
-      const socket = websocketRef.current;
-      websocketRef.current = null;
-      if (socket && typeof WebSocket !== 'undefined' && socket.readyState < WebSocket.CLOSING) {
-        socket.close();
-      }
-
       void release({ updateState: false });
     };
   }, [release]);
@@ -864,23 +469,17 @@ export function useVoiceProcessor({
   return {
     attachInputStream,
     bassGain,
-    changeVoicemodVoice,
     clearMicEnabled,
-    currentVoiceId,
     error,
     eqGainRange: EQ_GAIN_RANGE,
-    isChangingVoice,
-    isConnected,
     isNativeRobotEnabled,
     isProcessing,
     isReady,
-    isVoicemodConfigured: Boolean(VOICEMOD_CLIENT_KEY),
     micDeviceId,
     micVolume,
     midGain,
     processedStream,
     processedTrack,
-    refreshVoicemodVoices,
     release,
     requestMicrophoneStream,
     resume,
@@ -890,7 +489,5 @@ export function useVoiceProcessor({
     setNativeRobotEnabled,
     setTrebleGain,
     trebleGain,
-    voicemodStatus,
-    voices,
   };
 }
