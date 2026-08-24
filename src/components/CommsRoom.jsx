@@ -771,6 +771,7 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
           />
         </div>
       </div>
+      <DebugPanel open={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
     </>
   );
 }
