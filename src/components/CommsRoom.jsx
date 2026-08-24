@@ -770,8 +770,9 @@ function CommsRoomUI({ nickname, roomName, baseRoom, onDisconnect, onRequestSubR
             icon={<Headphones size={18} color={isDeafened ? 'var(--c-red)' : 'var(--c-text-secondary)'} />}
           />
         </div>
+
+        <DebugPanel open={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
       </div>
-      <DebugPanel open={showDebugPanel} onClose={() => setShowDebugPanel(false)} />
     </>
   );
 }
