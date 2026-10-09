@@ -84,6 +84,18 @@ const hasCam = tipo === 'meetings';
                   <path d="M4 4l16 16" />
                 </svg>
               </button>
+              <button class="ctrl on" id="spk" type="button" aria-pressed="true" aria-label="Altavoz" title="Altavoz">
+                <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M11 5 6.5 9H3v6h3.5L11 19V5Z" />
+                  <path d="M15.4 8.6a5 5 0 0 1 0 6.8" />
+                  <path d="M18.4 5.6a9 9 0 0 1 0 12.8" />
+                </svg>
+                <svg class="i-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M11 5 6.5 9H3v6h3.5L11 19V5Z" />
+                  <path d="m15.5 9.5 5 5" />
+                  <path d="m20.5 9.5-5 5" />
+                </svg>
+              </button>
               {hasCam && (
                 <button class="ctrl off" id="cam" type="button" aria-pressed="false" aria-label="Cámara" title="Cámara">
                   <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -214,7 +226,9 @@ const hasCam = tipo === 'meetings';
 
       let voiceRoom = null;
       let inited = false;
+      let speakerOn = true;
       const audioEls = new Map();
+      function applySpeaker() { audioEls.forEach((el) => { try { el.muted = !speakerOn; } catch {} }); }
 
       function setStatus(t) { if (statusEl) statusEl.textContent = t; }
 
@@ -271,6 +285,7 @@ const hasCam = tipo === 'meetings';
           room.on(RoomEvent.TrackSubscribed, (track) => {
             if (track.kind === Track.Kind.Audio) {
               const el = track.attach();
+              el.muted = !speakerOn;
               document.body.appendChild(el);
               audioEls.set(track.sid, el);
             }
@@ -354,8 +369,16 @@ const hasCam = tipo === 'meetings';
         try { await voiceRoom.localParticipant.setMicrophoneEnabled(next); } catch {}
         syncMic();
       });
+      const spk = document.getElementById('spk');
+      if (spk) spk.addEventListener('click', () => {
+        speakerOn = !speakerOn;
+        applySpeaker();
+        spk.setAttribute('aria-pressed', String(speakerOn));
+        spk.classList.toggle('on', speakerOn);
+        spk.classList.toggle('off', !speakerOn);
+      });
       document.querySelectorAll('.ctrl').forEach((b) => {
-        if (b.id === 'mic' || b.id === 'leave') return;
+        if (b.id === 'mic' || b.id === 'spk' || b.id === 'leave') return;
         b.addEventListener('click', () => {
           const on = b.getAttribute('aria-pressed') === 'true';
           b.setAttribute('aria-pressed', String(!on));
