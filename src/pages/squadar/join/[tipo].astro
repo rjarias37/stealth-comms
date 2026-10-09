@@ -1,0 +1,121 @@
+---
+// Squadar — Entrada (join) a una sala de un nicho concreto.
+// Ruta: /squadar/join/staff | /squadar/join/squads | /squadar/join/meetings
+// Cada nicho muestra SUS funciones. Fácil de entrar: código + tu nombre.
+const MODALIDADES = {
+  staff: { kicker: 'Sala de Staff', sub: 'Eventos en vivo', funciones: ['Voz'] },
+  squads: { kicker: 'Sala de Squads', sub: 'Escuadras de juego', funciones: ['Voz', 'Texto'] },
+  meetings: { kicker: 'Sala de Meetings', sub: 'Reuniones efímeras', funciones: ['Voz', 'Texto', 'Cámara', 'Pantalla'] },
+};
+const tipo = String(Astro.params.tipo || '').toLowerCase();
+if (!MODALIDADES[tipo]) return Astro.redirect('/squadar');
+const cfg = MODALIDADES[tipo];
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Entrar — {cfg.kicker}</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#1d1a15" />
+    <link rel="icon" type="image/png" href="/logo-tren.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    />
+  </head>
+
+  <body style="background:#1d1a15" data-tipo={tipo}>
+    <div class="ed">
+      <header class="topbar">
+        <a class="brand" href="/squadar">Squadar</a>
+        <a class="back" href="/squadar">← Volver</a>
+      </header>
+
+      <main class="wrap">
+        <section class="card">
+          <p class="kicker">{cfg.kicker}</p>
+          <h1 class="display">Entrar en una sala</h1>
+          <p class="lede">Pon el código que te han dado y tu nombre. En un segundo estás dentro.</p>
+
+          <ul class="funcs" aria-label="Funciones de esta sala">
+            {cfg.funciones.map((f) => <li class="func">{f}</li>)}
+          </ul>
+
+          <form id="f" class="form" novalidate>
+            <div class="group">
+              <label class="label" for="code">Código de la sala</label>
+              <input id="code" class="field mono" type="text" placeholder={'Ej. ' + tipo + '-7k9'} autocomplete="off" spellcheck="false" maxlength="40" />
+            </div>
+            <div class="group">
+              <label class="label" for="nombre">Tu nombre</label>
+              <input id="nombre" class="field" type="text" placeholder="Tu nombre" autocomplete="nickname" maxlength="32" />
+            </div>
+            <button class="cta" type="submit">Entrar</button>
+            <p class="err" id="err" hidden></p>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script define:vars={{ tipo }}>
+      const form = document.getElementById('f');
+      const codeEl = document.getElementById('code');
+      const nombreEl = document.getElementById('nombre');
+      const err = document.getElementById('err');
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const n = (nombreEl.value || '').trim();
+        let code = (codeEl.value || '').trim().toLowerCase().replace(/\s+/g, '');
+        if (code.length < 2) { err.hidden = false; err.textContent = 'Escribe el código de la sala.'; codeEl.focus(); return; }
+        if (n.length < 2) { err.hidden = false; err.textContent = 'Escribe al menos 2 caracteres en tu nombre.'; nombreEl.focus(); return; }
+        if (!code.includes('-')) code = tipo + '-' + code;
+        try {
+          localStorage.setItem('squadar_nombre', n);
+          localStorage.setItem('squadar_tipo', tipo);
+          localStorage.setItem('squadar_rol', 'participante');
+        } catch {}
+        window.location.href = '/squadar/room/' + code;
+      });
+    </script>
+
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      .ed {
+        --paper: #eadfc7; --text: #eee2ca; --muted: #c5b79e; --gold: #c3a47b; --gold-bright: #dbc39c;
+        --line: rgba(234, 223, 199, 0.14); --ease: cubic-bezier(0.2, 0.78, 0.2, 1);
+        min-height: 100dvh;
+        background: radial-gradient(120% 80% at 50% -10%, #2a2418 0%, #1d1a15 55%);
+        color: var(--text); font-family: 'Inter', system-ui, sans-serif;
+        padding: clamp(1.25rem, 4vw, 3rem);
+      }
+      .topbar { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); }
+      .brand { font-family: 'Instrument Serif', Georgia, serif; font-size: 1.25rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--paper); text-decoration: none; }
+      .back { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); text-decoration: none; }
+
+      .wrap { display: flex; justify-content: center; padding-top: clamp(2rem, 8vw, 4rem); }
+      .card { width: 100%; max-width: 26rem; padding: clamp(1.5rem, 5vw, 2.25rem); border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, rgba(234,223,199,.05), rgba(234,223,199,.015)); }
+      .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; color: var(--gold); }
+      .display { margin-top: 0.6rem; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: clamp(2rem, 8vw, 2.8rem); line-height: 1.02; color: var(--paper); }
+      .lede { margin-top: 0.8rem; color: var(--muted); line-height: 1.55; font-size: 0.95rem; }
+
+      .funcs { list-style: none; margin: 1.2rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .func { padding: 0.35rem 0.8rem; border: 1px solid rgba(195,164,123,.4); border-radius: 999px; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold-bright); }
+
+      .form { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 1.1rem; }
+      .group { display: flex; flex-direction: column; }
+      .label { margin-bottom: 0.45rem; font-family: 'JetBrains Mono', monospace; font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+      .field { width: 100%; padding: 0.95rem 1.1rem; background: rgba(234,223,199,.05); border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 1rem; outline: none; }
+      .field.mono { font-family: 'JetBrains Mono', monospace; letter-spacing: 0.08em; }
+      .field::placeholder { color: rgba(197,183,158,.5); }
+      .field:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(195,164,123,.18); }
+      .cta { margin-top: 0.4rem; padding: 1.05rem 1.6rem; background: var(--gold); color: #1d1a15; border: 0; border-radius: 999px; font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 1rem; cursor: pointer; transition: background .25s var(--ease), transform .15s var(--ease); }
+      .cta:hover { background: var(--gold-bright); transform: translateY(-1px); }
+      .err { margin: 0; color: #ff9e8a; font-size: 0.85rem; }
+    </style>
+  </body>
+</html>

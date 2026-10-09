@@ -1,0 +1,267 @@
+---
+// Squadar — Crear una sala (pantalla nativa, estilo cálido editorial, mobile-first).
+// Solo diseño: todavía no crea la sala de verdad (eso es backend).
+const modalidades = [
+  { id: 'staff', tag: 'Evento', title: 'Staff', sub: 'Eventos en vivo', nota: 'Se cierra sola al acabar el evento.' },
+  { id: 'squads', tag: 'Gaming', title: 'Squads', sub: 'Escuadras de juego', nota: 'Se apaga sola al terminar la partida.' },
+  { id: 'meetings', tag: 'Reunión', title: 'Meetings', sub: 'Reuniones efímeras', nota: 'Se archiva en la fecha de cierre.' },
+];
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Crear una sala — Squadar</title>
+    <meta name="description" content="Crea una sala de voz y texto en Squadar." />
+    <meta name="theme-color" content="#1d1a15" />
+    <link rel="icon" type="image/png" href="/logo-tren.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" />
+  </head>
+
+  <body style="background:#1d1a15">
+    <div class="ed">
+      <header class="topbar">
+        <a class="brand" href="/squadar">Squadar</a>
+        <a class="back" href="/squadar">← Volver</a>
+      </header>
+
+      <main class="wrap">
+        <p class="kicker">Nueva sala</p>
+        <h1 class="display">Crear una sala</h1>
+        <p class="lede">Elige el tipo, ponle un nombre y decide cuándo se apaga.</p>
+
+        <form id="createForm" class="form" novalidate>
+          <fieldset class="group">
+            <legend class="label">Modalidad</legend>
+            <div class="options">
+              {
+                modalidades.map((m, i) => (
+                  <label class="option">
+                    <input type="radio" name="modalidad" value={m.id} checked={i === 0} />
+                    <span class="option-box">
+                      <span class="option-tag">{m.tag}</span>
+                      <span class="option-title">{m.title}</span>
+                      <span class="option-sub">{m.sub}</span>
+                    </span>
+                  </label>
+                ))
+              }
+            </div>
+          </fieldset>
+
+          <div class="group">
+            <label class="label" for="roomName">Nombre de la sala</label>
+            <input id="roomName" class="field" type="text" name="roomName" placeholder="Operación Red" autocomplete="off" maxlength="48" />
+          </div>
+
+          <div class="group">
+            <label class="label" for="closeWhen">Cierre</label>
+            <p class="hint" id="closeHint">Se cierra sola al acabar el evento.</p>
+
+            <input id="closeDate" class="field" type="datetime-local" name="closeDate" />
+            <select id="ttl" class="field hidden" name="ttl">
+              <option value="2">2 horas</option>
+              <option value="6">6 horas</option>
+              <option value="12" selected>12 horas</option>
+            </select>
+          </div>
+
+          <button class="cta" type="submit">Crear sala</button>
+          <p class="demo" id="demo" hidden></p>
+          <p class="note">Demo de diseño. Todavía no crea la sala de verdad.</p>
+        </form>
+      </main>
+    </div>
+
+    <script>
+      const form = document.getElementById('createForm');
+      const hint = document.getElementById('closeHint');
+      const date = document.getElementById('closeDate');
+      const ttl = document.getElementById('ttl');
+      const demo = document.getElementById('demo');
+
+      const notas = {
+        staff: { hint: 'Se cierra sola al acabar el evento.', modo: 'date' },
+        squads: { hint: 'Se apaga sola al terminar la partida.', modo: 'ttl' },
+        meetings: { hint: 'Se archiva en la fecha de cierre.', modo: 'date' },
+      };
+
+      function upd() {
+        const val = form.querySelector('input[name="modalidad"]:checked')?.value || 'staff';
+        const cfg = notas[val];
+        hint.textContent = cfg.hint;
+        date.classList.toggle('hidden', cfg.modo !== 'date');
+        ttl.classList.toggle('hidden', cfg.modo !== 'ttl');
+      }
+      form.addEventListener('change', upd);
+      upd();
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const val = form.querySelector('input[name="modalidad"]:checked')?.value || 'staff';
+        const name = document.getElementById('roomName').value.trim();
+        demo.hidden = false;
+        demo.textContent = name
+          ? `Listo (demo): sala "${name}" de tipo ${val}. Aquí se generaría el código y el enlace.`
+          : 'Escribe un nombre para continuar (demo).';
+      });
+    </script>
+
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      .ed {
+        --paper: #eadfc7;
+        --text: #eee2ca;
+        --muted: #c5b79e;
+        --gold: #c3a47b;
+        --gold-bright: #dbc39c;
+        --line: rgba(234, 223, 199, 0.14);
+        --ease: cubic-bezier(0.2, 0.78, 0.2, 1);
+        min-height: 100dvh;
+        background: radial-gradient(120% 80% at 50% -10%, #2a2418 0%, #1d1a15 55%);
+        color: var(--text);
+        font-family: var(--font-sans, Inter, system-ui, sans-serif);
+        padding: clamp(1.25rem, 4vw, 3rem);
+        padding-bottom: clamp(3rem, 8vw, 6rem);
+      }
+      .topbar {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        font-family: 'Instrument Serif', Georgia, serif;
+        font-size: 1.25rem;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--paper);
+        text-decoration: none;
+      }
+      .back {
+        font-family: var(--font-mono, monospace);
+        font-size: 0.7rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--gold);
+        text-decoration: none;
+      }
+      .back:hover { color: var(--gold-bright); }
+
+      .wrap { max-width: 34rem; margin: 0 auto; padding-top: clamp(2rem, 6vw, 3.5rem); }
+      .kicker {
+        font-family: var(--font-mono, monospace);
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.3em;
+        text-transform: uppercase;
+        color: var(--gold);
+      }
+      .display {
+        margin-top: 0.75rem;
+        font-family: 'Instrument Serif', Georgia, serif;
+        font-weight: 400;
+        font-size: clamp(2.4rem, 10vw, 3.6rem);
+        line-height: 1;
+        color: var(--paper);
+      }
+      .lede { margin-top: 0.9rem; color: var(--muted); line-height: 1.6; }
+
+      .form { margin-top: 2rem; display: flex; flex-direction: column; gap: 1.5rem; }
+      .group { border: 0; margin: 0; padding: 0; }
+      .label {
+        display: block;
+        margin-bottom: 0.6rem;
+        font-family: var(--font-mono, monospace);
+        font-size: 0.68rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .hint { margin: 0 0 0.6rem; font-size: 0.85rem; color: var(--muted); }
+
+      .options { display: grid; grid-template-columns: 1fr; gap: 0.6rem; }
+      .option { position: relative; cursor: pointer; }
+      .option input { position: absolute; opacity: 0; inset: 0; }
+      .option-box {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.95rem 1.05rem;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(180deg, rgba(234,223,199,.05), rgba(234,223,199,.015));
+        transition: border-color .25s var(--ease), background .25s var(--ease);
+      }
+      .option:hover .option-box { border-color: rgba(195,164,123,.45); }
+      .option input:checked + .option-box {
+        border-color: var(--gold);
+        background: linear-gradient(180deg, rgba(195,164,123,.16), rgba(195,164,123,.05));
+      }
+      .option-tag {
+        font-family: var(--font-mono, monospace);
+        font-size: 0.6rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--gold);
+      }
+      .option-title {
+        font-family: 'Instrument Serif', Georgia, serif;
+        font-size: 1.3rem;
+        color: var(--paper);
+      }
+      .option-sub { font-size: 0.8rem; color: var(--muted); }
+
+      .field {
+        width: 100%;
+        padding: 0.95rem 1.1rem;
+        background: rgba(234,223,199,.05);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: var(--text);
+        font-family: var(--font-sans, Inter, sans-serif);
+        font-size: 1rem;
+        outline: none;
+      }
+      .field::placeholder { color: rgba(197,183,158,.55); }
+      .field:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(195,164,123,.18); }
+      .hidden { display: none; }
+
+      .cta {
+        margin-top: 0.5rem;
+        padding: 1.05rem 1.6rem;
+        background: var(--gold);
+        color: #1d1a15;
+        border: 0;
+        border-radius: 999px;
+        font-family: var(--font-sans, Inter, sans-serif);
+        font-weight: 600;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background .25s var(--ease), transform .15s var(--ease);
+      }
+      .cta:hover { background: var(--gold-bright); transform: translateY(-1px); }
+
+      .demo {
+        margin: 0;
+        padding: 0.9rem 1.1rem;
+        border: 1px solid rgba(195,164,123,.4);
+        border-radius: 12px;
+        background: rgba(195,164,123,.1);
+        color: var(--gold-bright);
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+      .note { margin: 0; font-family: var(--font-mono, monospace); font-size: 0.65rem; color: var(--muted); opacity: .8; }
+
+      @media (min-width: 640px) {
+        .options { grid-template-columns: repeat(3, 1fr); }
+      }
+    </style>
+  </body>
+</html>
