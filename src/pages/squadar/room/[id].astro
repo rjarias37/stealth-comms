@@ -416,26 +416,52 @@ const hasCam = tipo === 'meetings';
       if (micSel) micSel.addEventListener('change', async () => { try { if (voiceRoom) await voiceRoom.switchActiveDevice('audioinput', micSel.value); } catch {} });
       if (outSel) outSel.addEventListener('change', async () => { try { if (voiceRoom) await voiceRoom.switchActiveDevice('audiooutput', outSel.value); } catch {} });
 
-      // Chat (local, demo)
-      const msgForm = document.getElementById('msgForm');
-      if (msgForm) {
-        const input = document.getElementById('msgInput');
-        const list = document.getElementById('msgs');
-        msgForm.addEventListener('submit', (e) => {
-          e.preventDefault();
-          const t = (input.value || '').trim();
-          if (!t) return;
-          const who = nombre || 'Tú';
-          const li = document.createElement('li');
-          li.className = 'msg';
-          const w = document.createElement('span'); w.className = 'who'; w.textContent = who; w.style.color = colorFor(who);
-          const x = document.createElement('span'); x.className = 'txt'; x.textContent = t;
-          li.appendChild(w); li.appendChild(x);
-          list.appendChild(li);
-          input.value = '';
-          list.scrollTop = list.scrollHeight;
-        });
-      }
+// Chat (Supabase Realtime)
+        import { createClient } from '@supabase/supabase-js';
+        const supabase = createClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
+        const salaId = id; // room identifier
+        const nombreUsuario = nombre || 'Anon';
+        // Subscribe to new messages
+        supabase
+          .channel(`room_${salaId}`)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+            const msg = payload.new;
+            if (msg.room_id !== salaId) return;
+            const li = document.createElement('li');
+            li.className = 'msg';
+            const w = document.createElement('span');
+            w.className = 'who';
+            w.textContent = msg.username;
+            w.style.color = colorFor(msg.username);
+            const x = document.createElement('span');
+            x.className = 'txt';
+            x.textContent = msg.content;
+            li.appendChild(w);
+            li.appendChild(x);
+            list.appendChild(li);
+            list.scrollTop = list.scrollHeight;
+          })
+          .subscribe();
+        // Send message
+        const msgForm = document.getElementById('msgForm');
+        if (msgForm) {
+          const input = document.getElementById('msgInput');
+          const list = document.getElementById('msgs');
+          msgForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const t = (input.value || '').trim();
+            if (!t) return;
+            const { error } = await supabase.from('messages').insert({
+              room_id: salaId,
+              username: nombreUsuario,
+              content: t,
+            });
+            if (error) {
+              console.error('Error sending message', error);
+            }
+            input.value = '';
+          });
+        }
     </script>
 
     <style>
