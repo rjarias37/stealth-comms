@@ -1,0 +1,566 @@
+---
+// Squadar — Sala (donde está todo el mundo conectado).
+// Ruta: /squadar/room/[id]  (id tipo "staff-x7k2")
+// Voz REAL con LiveKit (paso backend 1). Texto por nicho (aun demo).
+const id = String(Astro.params.id || '');
+const tipo = id.split('-')[0] || 'staff';
+const TITULOS = { staff: 'Sala de Staff', squads: 'Sala de Squads', meetings: 'Sala de Meetings' };
+const FUNCIONES = { staff: ['Voz'], squads: ['Voz', 'Texto'], meetings: ['Voz', 'Texto', 'Cámara', 'Pantalla'] };
+const titulo = TITULOS[tipo] || 'Sala';
+const funciones = FUNCIONES[tipo] || [];
+const hasTexto = tipo === 'squads' || tipo === 'meetings';
+const hasCam = tipo === 'meetings';
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>{titulo} — Squadar</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#1d1a15" />
+    <link rel="icon" type="image/png" href="/logo-tren.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    />
+  </head>
+
+  <body style="background:#1d1a15" data-sala-id={id} data-tipo={tipo}>
+    <div class="ed">
+      <header class="topbar">
+        <a class="brand" href="/squadar">Squadar</a>
+        <a class="back" href="/squadar" id="salir">← Salir</a>
+      </header>
+
+      <main class="wrap">
+        <!-- PUERTA (join) -->
+        <section class="card" id="gate" hidden>
+          <p class="kicker">{titulo}</p>
+          <h1 class="display">Entra en la sala</h1>
+          <p class="lede">Te han invitado a una sala. Pon tu nombre y entra. No hace falta cuenta ni descargar nada.</p>
+          <ul class="funcs" aria-label="Funciones de esta sala">
+            {funciones.map((f) => <li class="func">{f}</li>)}
+          </ul>
+          <form id="joinForm" class="form" novalidate>
+            <div class="group">
+              <label class="label" for="jname">Tu nombre</label>
+              <input id="jname" class="field" type="text" placeholder="Tu nombre" maxlength="32" autocomplete="nickname" />
+            </div>
+            <button class="cta" type="submit">Entrar</button>
+            <p class="err" id="jerr" hidden></p>
+          </form>
+        </section>
+
+        <!-- SALA -->
+        <div id="sala" hidden>
+          <p class="kicker">{titulo}</p>
+          <h1 class="display" id="tituloSala">{titulo}</h1>
+          <p class="code" id="code">{id}</p>
+
+          <!-- VOZ -->
+          <section class="block">
+            <div class="block-head">
+              <h2 class="block-title">Sala de voz</h2>
+              <span class="status" id="status">Conectando…</span>
+            </div>
+            <ul class="people-list" id="people" aria-live="polite"></ul>
+            <div class="controls" role="group" aria-label="Controles de la sala">
+              <button class="ctrl off" id="mic" type="button" aria-pressed="false" aria-label="Micrófono" title="Micrófono">
+                <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3.2a2.8 2.8 0 0 1 2.8 2.8v4.6a2.8 2.8 0 0 1-5.6 0V6A2.8 2.8 0 0 1 12 3.2Z" />
+                  <path d="M5.6 11.2a6.4 6.4 0 0 0 12.8 0" />
+                  <path d="M12 17.6v3" />
+                  <path d="M8.6 20.6h6.8" />
+                </svg>
+                <svg class="i-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3.2a2.8 2.8 0 0 1 2.8 2.8v3.4" />
+                  <path d="M14.8 11.6v.6a2.8 2.8 0 0 1-4.3 2.4" />
+                  <path d="M5.6 11.2a6.4 6.4 0 0 0 9.4 5.7" />
+                  <path d="M12 17.6v3" />
+                  <path d="M8.6 20.6h6.8" />
+                  <path d="M4 4l16 16" />
+                </svg>
+              </button>
+              <button class="ctrl on" id="spk" type="button" aria-pressed="true" aria-label="Altavoz" title="Altavoz">
+                <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M11 5 6.5 9H3v6h3.5L11 19V5Z" />
+                  <path d="M15.4 8.6a5 5 0 0 1 0 6.8" />
+                  <path d="M18.4 5.6a9 9 0 0 1 0 12.8" />
+                </svg>
+                <svg class="i-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M11 5 6.5 9H3v6h3.5L11 19V5Z" />
+                  <path d="m15.5 9.5 5 5" />
+                  <path d="m20.5 9.5-5 5" />
+                </svg>
+              </button>
+              {hasCam && (
+                <button class="ctrl off" id="cam" type="button" aria-pressed="false" aria-label="Cámara" title="Cámara">
+                  <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2.6" y="6.6" width="12.4" height="10.8" rx="2.4" />
+                    <path d="M15 10.8l6.4-3.6v9.6L15 13.2" />
+                  </svg>
+                  <svg class="i-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2.6" y="6.6" width="12.4" height="10.8" rx="2.4" />
+                    <path d="M15 10.8l6.4-3.6v9.6L15 13.2" />
+                    <path d="M4 4l16 16" />
+                  </svg>
+                </button>
+              )}
+              {hasCam && (
+                <button class="ctrl off" id="screen" type="button" aria-pressed="false" aria-label="Compartir pantalla" title="Compartir pantalla">
+                  <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2.6" y="4.2" width="18.8" height="12.4" rx="2.2" />
+                    <path d="M8.6 20.6h6.8" />
+                    <path d="M12 16.6V10.4" />
+                    <path d="M9.4 13l2.6-2.6 2.6 2.6" />
+                  </svg>
+                  <svg class="i-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="2.6" y="4.2" width="18.8" height="12.4" rx="2.2" />
+                    <path d="M8.6 20.6h6.8" />
+                    <path d="M12 16.6V10.4" />
+                    <path d="M9.4 13l2.6-2.6 2.6 2.6" />
+                    <path d="M4 4l16 16" />
+                  </svg>
+                </button>
+              )}
+              <button class="ctrl" id="ajustes" type="button" aria-expanded="false" aria-label="Ajustes de dispositivos" title="Ajustes">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 6h6" />
+                  <path d="M16 6h4" />
+                  <circle cx="13" cy="6" r="2.2" />
+                  <path d="M4 12h2" />
+                  <path d="M10 12h10" />
+                  <circle cx="7" cy="12" r="2.2" />
+                  <path d="M4 18h10" />
+                  <path d="M18 18h2" />
+                  <circle cx="15" cy="18" r="2.2" />
+                </svg>
+              </button>
+              <button class="ctrl leave" id="leave" type="button" aria-label="Salir de la sala" title="Salir">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7.5" />
+                  <path d="M12.5 12H22" />
+                  <path d="m18.5 8 3.5 4-3.5 4" />
+                </svg>
+              </button>
+            </div>
+            <div class="devices" id="devices" hidden>
+              <div class="dev">
+                <label class="label" for="micSel">Micrófono</label>
+                <select class="field" id="micSel"></select>
+              </div>
+              <div class="dev">
+                <label class="label" for="outSel">Salida de audio</label>
+                <select class="field" id="outSel"></select>
+              </div>
+            </div>
+          </section>
+
+          <!-- COMPARTIR -->
+          <section class="block">
+            <h2 class="block-title">Comparte esta sala</h2>
+            <p class="sub">Quien abra el enlace pone su nombre y entra. Sin descargar nada.</p>
+            <div class="share-row">
+              <span class="share-link" id="shareLink">—</span>
+              <button class="share-copy" id="copyBtn" type="button">Copiar</button>
+            </div>
+            <div class="qr-wrap">
+              <img id="qr" alt="Código QR para entrar a la sala" width="200" height="200" />
+            </div>
+            <p class="copy-msg" id="copyMsg" hidden>Enlace copiado.</p>
+          </section>
+
+          <!-- TEXTO -->
+          {
+            hasTexto && (
+              <section class="block">
+                <h2 class="block-title">Texto</h2>
+                <ul class="msgs" id="msgs">
+                  <li class="msg sys"><span class="txt">Sala creada. Comparte el enlace para que entren.</span></li>
+                </ul>
+                <form id="msgForm" class="msg-form">
+                  <input id="msgInput" class="field" type="text" placeholder="Escribe un mensaje…" maxlength="500" autocomplete="off" />
+                  <button class="send" type="submit">Enviar</button>
+                </form>
+              </section>
+            )
+          }
+
+          <p class="note">Voz: conexión real con LiveKit. Texto: pendiente (backend 2).</p>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      import QRCode from 'qrcode';
+      import { Room, RoomEvent, Track } from 'livekit-client';
+
+      const id = document.body.dataset.salaId || '';
+      const link = location.origin + '/squadar/room/' + id;
+
+      const gate = document.getElementById('gate');
+      const sala = document.getElementById('sala');
+      const joinForm = document.getElementById('joinForm');
+      const jname = document.getElementById('jname');
+      const jerr = document.getElementById('jerr');
+      const peopleEl = document.getElementById('people');
+      const statusEl = document.getElementById('status');
+      const titulo = document.getElementById('tituloSala');
+      const linkEl = document.getElementById('shareLink');
+      const qr = document.getElementById('qr');
+      const copyBtn = document.getElementById('copyBtn');
+      const copyMsg = document.getElementById('copyMsg');
+
+      const PALETA = ['#dbc39c', '#9ec6a6', '#e0a08a', '#b7b3e0', '#e6a6c8', '#c7d17e', '#e8c86a', '#8fd0cf'];
+      function colorFor(name) {
+        let h = 0;
+        for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+        return PALETA[h % PALETA.length];
+      }
+
+      let nombre = '';
+      try { nombre = localStorage.getItem('squadar_nombre') || ''; } catch {}
+
+      let voiceRoom = null;
+      let inited = false;
+      let speakerOn = true;
+      const audioEls = new Map();
+      function applySpeaker() { audioEls.forEach((el) => { try { el.muted = !speakerOn; } catch {} }); }
+
+      function setStatus(t) { if (statusEl) statusEl.textContent = t; }
+
+      function renderPeople() {
+        if (!peopleEl) return;
+        const items = [];
+        if (voiceRoom) {
+          const lp = voiceRoom.localParticipant;
+          items.push({ name: (lp && lp.name) || nombre || 'Tú', speaking: !!(lp && lp.isSpeaking), me: true });
+          voiceRoom.remoteParticipants.forEach((p) => {
+            items.push({ name: p.name || p.identity, speaking: p.isSpeaking, me: false });
+          });
+        } else {
+          items.push({ name: nombre || 'Tú', speaking: false, me: true });
+        }
+        const frag = document.createDocumentFragment();
+        const make = (it) => {
+          const li = document.createElement('li');
+          li.className = 'person' + (it.speaking ? ' speaking' : '');
+          const dot = document.createElement('span');
+          dot.className = 'dot' + (it.speaking ? '' : ' dim');
+          const nm = document.createElement('span');
+          nm.className = 'pname';
+          nm.textContent = it.name + (it.me ? ' (tú)' : '');
+          nm.style.color = colorFor(it.name);
+          li.appendChild(dot); li.appendChild(nm);
+          if (it.speaking) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = 'hablando'; li.appendChild(b); }
+          return li;
+        };
+        items.forEach((it) => frag.appendChild(make(it)));
+        if (items.length <= 1) {
+          const li = document.createElement('li'); li.className = 'person waiting';
+          const dot = document.createElement('span'); dot.className = 'dot dim';
+          const nm = document.createElement('span'); nm.className = 'pname'; nm.textContent = 'Esperando a más…';
+          li.appendChild(dot); li.appendChild(nm); frag.appendChild(li);
+        }
+        peopleEl.replaceChildren(frag);
+      }
+
+      async function connectVoice() {
+        setStatus('Conectando…');
+        try {
+          const res = await fetch('/api/livekit/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ room: id, name: nombre || 'Invitado' }),
+          });
+          const data = await res.json();
+          if (!res.ok) { setStatus('Sin conexión: ' + (data.error || res.status)); return; }
+
+          const room = new Room({ adaptiveStream: true, dynacast: true });
+          voiceRoom = room;
+
+          room.on(RoomEvent.TrackSubscribed, (track) => {
+            if (track.kind === Track.Kind.Audio) {
+              const el = track.attach();
+              el.muted = !speakerOn;
+              document.body.appendChild(el);
+              audioEls.set(track.sid, el);
+            }
+          });
+          room.on(RoomEvent.TrackUnsubscribed, (track) => {
+            track.detach().forEach((e) => e.remove());
+            audioEls.delete(track.sid);
+          });
+          room.on(RoomEvent.ParticipantConnected, renderPeople);
+          room.on(RoomEvent.ParticipantDisconnected, renderPeople);
+          room.on(RoomEvent.ActiveSpeakersChanged, renderPeople);
+          room.on(RoomEvent.LocalTrackPublished, renderPeople);
+          room.on(RoomEvent.Disconnected, () => { setStatus('Desconectado'); voiceRoom = null; renderPeople(); });
+
+          await room.connect(data.url, data.token);
+          setStatus('Conectado');
+          renderPeople();
+
+          // publicar micro
+          try { await room.localParticipant.setMicrophoneEnabled(true); } catch {}
+          try { await room.startAudio(); } catch {}
+          syncMic();
+          renderPeople();
+        } catch (e) {
+          console.error(e);
+          setStatus('Sin conexión');
+        }
+      }
+
+      function micOn() {
+        try { return !!(voiceRoom && voiceRoom.localParticipant.isMicrophoneEnabled); } catch { return false; }
+      }
+      function syncMic() {
+        const b = document.getElementById('mic');
+        if (!b) return;
+        const on = micOn();
+        b.setAttribute('aria-pressed', String(on));
+        b.classList.toggle('on', on);
+        b.classList.toggle('off', !on);
+      }
+
+      function initRoom() {
+        if (inited) return;
+        inited = true;
+        linkEl.textContent = link;
+        try {
+          const s = localStorage.getItem('squadar_sala');
+          if (s) titulo.textContent = s;
+        } catch {}
+        QRCode.toDataURL(link, { margin: 1, width: 200, color: { dark: '#1d1a15', light: '#eadfc7' } })
+          .then((url) => { qr.src = url; })
+          .catch(() => {});
+        renderPeople();
+        connectVoice();
+      }
+      function showRoom() { gate.hidden = true; sala.hidden = false; initRoom(); }
+
+      let hasName = false;
+      try { hasName = !!localStorage.getItem('squadar_nombre'); } catch {}
+      if (hasName) showRoom();
+      else { gate.hidden = false; setTimeout(() => jname && jname.focus(), 50); }
+
+      joinForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const n = (jname.value || '').trim();
+        if (n.length < 2) { jerr.hidden = false; jerr.textContent = 'Escribe al menos 2 caracteres en tu nombre.'; jname.focus(); return; }
+        nombre = n;
+        try { localStorage.setItem('squadar_nombre', n); localStorage.setItem('squadar_rol', 'participante'); } catch {}
+        showRoom();
+      });
+
+      copyBtn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(link); copyMsg.hidden = false; setTimeout(() => { copyMsg.hidden = true; }, 2000); } catch {}
+      });
+
+      // Controles
+      const mic = document.getElementById('mic');
+      if (mic) mic.addEventListener('click', async () => {
+        if (!voiceRoom) return;
+        const next = !micOn();
+        try { await voiceRoom.localParticipant.setMicrophoneEnabled(next); } catch {}
+        syncMic();
+      });
+      const spk = document.getElementById('spk');
+      if (spk) spk.addEventListener('click', () => {
+        speakerOn = !speakerOn;
+        applySpeaker();
+        spk.setAttribute('aria-pressed', String(speakerOn));
+        spk.classList.toggle('on', speakerOn);
+        spk.classList.toggle('off', !speakerOn);
+      });
+      document.querySelectorAll('.ctrl').forEach((b) => {
+        if (b.id === 'mic' || b.id === 'spk' || b.id === 'leave') return;
+        b.addEventListener('click', () => {
+          const on = b.getAttribute('aria-pressed') === 'true';
+          b.setAttribute('aria-pressed', String(!on));
+          b.classList.toggle('on', !on);
+          b.classList.toggle('off', on);
+        });
+      });
+      const leave = document.getElementById('leave');
+      if (leave) leave.addEventListener('click', () => {
+        try { if (voiceRoom) voiceRoom.disconnect(); } catch {}
+        window.location.href = '/squadar';
+      });
+
+      // Ajustes de dispositivos
+      const devicesEl = document.getElementById('devices');
+      const ajustesBtn = document.getElementById('ajustes');
+      const micSel = document.getElementById('micSel');
+      const outSel = document.getElementById('outSel');
+      async function loadDevices() {
+        try {
+          const list = await navigator.mediaDevices.enumerateDevices();
+          const mics = list.filter((d) => d.kind === 'audioinput');
+          const outs = list.filter((d) => d.kind === 'audiooutput');
+          micSel.replaceChildren(...mics.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Micrófono ' + (i + 1); return o; }));
+          outSel.replaceChildren(...outs.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Salida ' + (i + 1); return o; }));
+        } catch {}
+      }
+      if (ajustesBtn) ajustesBtn.addEventListener('click', async () => {
+        const open = devicesEl.hidden;
+        devicesEl.hidden = !open;
+        ajustesBtn.setAttribute('aria-expanded', String(open));
+        ajustesBtn.classList.toggle('on', open);
+        if (open) await loadDevices();
+      });
+      if (micSel) micSel.addEventListener('change', async () => { try { if (voiceRoom) await voiceRoom.switchActiveDevice('audioinput', micSel.value); } catch {} });
+      if (outSel) outSel.addEventListener('change', async () => { try { if (voiceRoom) await voiceRoom.switchActiveDevice('audiooutput', outSel.value); } catch {} });
+
+// Chat (Supabase Realtime)
+        import { createClient } from '@supabase/supabase-js';
+        const supabase = createClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
+        const salaId = id; // room identifier
+        const nombreUsuario = nombre || 'Anon';
+        // Subscribe to new messages
+        supabase
+          .channel(`room_${salaId}`)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+            const msg = payload.new;
+            if (msg.room_id !== salaId) return;
+            const li = document.createElement('li');
+            li.className = 'msg';
+            const w = document.createElement('span');
+            w.className = 'who';
+            w.textContent = msg.username;
+            w.style.color = colorFor(msg.username);
+            const x = document.createElement('span');
+            x.className = 'txt';
+            x.textContent = msg.content;
+            li.appendChild(w);
+            li.appendChild(x);
+            list.appendChild(li);
+            list.scrollTop = list.scrollHeight;
+          })
+          .subscribe();
+        // Send message
+        const msgForm = document.getElementById('msgForm');
+        if (msgForm) {
+          const input = document.getElementById('msgInput');
+          const list = document.getElementById('msgs');
+          msgForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const t = (input.value || '').trim();
+            if (!t) return;
+            const { error } = await supabase.from('messages').insert({
+              room_id: salaId,
+              username: nombreUsuario,
+              content: t,
+            });
+            if (error) {
+              console.error('Error sending message', error);
+            }
+            input.value = '';
+          });
+        }
+    </script>
+
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      .ed {
+        --paper: #eadfc7; --text: #eee2ca; --muted: #c5b79e; --gold: #c3a47b; --gold-bright: #dbc39c;
+        --line: rgba(234, 223, 199, 0.14); --ease: cubic-bezier(0.2, 0.78, 0.2, 1);
+        min-height: 100dvh;
+        background: radial-gradient(120% 80% at 50% -10%, #2a2418 0%, #1d1a15 55%);
+        color: var(--text); font-family: 'Inter', system-ui, sans-serif;
+        padding: clamp(1.25rem, 4vw, 3rem); padding-bottom: clamp(3rem, 8vw, 5rem);
+      }
+      .topbar { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); }
+      .brand { font-family: 'Instrument Serif', Georgia, serif; font-size: 1.25rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--paper); text-decoration: none; }
+      .back { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); text-decoration: none; }
+
+      .wrap { max-width: 34rem; margin: 0 auto; padding-top: clamp(1.5rem, 5vw, 2.5rem); }
+      .kicker { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; color: var(--gold); }
+      .display { margin-top: 0.5rem; font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: clamp(2rem, 9vw, 3rem); line-height: 1.02; color: var(--paper); }
+      .code { margin-top: 0.4rem; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; letter-spacing: 0.14em; color: var(--gold-bright); }
+
+      .card { max-width: 26rem; margin: 0 auto; padding: clamp(1.5rem, 5vw, 2.25rem); border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(180deg, rgba(234,223,199,.05), rgba(234,223,199,.015)); }
+      .lede { margin-top: 0.8rem; color: var(--muted); line-height: 1.55; font-size: 0.95rem; }
+      .form { margin-top: 1.6rem; display: flex; flex-direction: column; gap: 1.1rem; }
+      .group { display: flex; flex-direction: column; }
+      .label { margin-bottom: 0.45rem; font-family: 'JetBrains Mono', monospace; font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+      .field { width: 100%; padding: 0.95rem 1.1rem; background: rgba(234,223,199,.05); border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 1rem; outline: none; }
+      .field::placeholder { color: rgba(197,183,158,.5); }
+      .field:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(195,164,123,.18); }
+      .cta { margin-top: 0.4rem; padding: 1.05rem 1.6rem; background: var(--gold); color: #1d1a15; border: 0; border-radius: 999px; font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 1rem; cursor: pointer; transition: background .25s var(--ease), transform .15s var(--ease); }
+      .cta:hover { background: var(--gold-bright); transform: translateY(-1px); }
+      .err { margin: 0; color: #ff9e8a; font-size: 0.85rem; }
+      .funcs { list-style: none; margin: 1.1rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .func { padding: 0.35rem 0.8rem; border: 1px solid rgba(195,164,123,.4); border-radius: 999px; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold-bright); }
+
+      .block { margin-top: 1.75rem; padding: 1.3rem; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(234,223,199,.05), rgba(234,223,199,.015)); }
+      .block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+      .block-title { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 1.35rem; color: var(--paper); }
+      .status { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
+      .sub { margin-top: 0.3rem; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+
+      .people-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+      .controls { margin-top: 1.2rem; display: flex; align-items: center; justify-content: center; gap: 0.6rem; }
+      .ctrl {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 46px; height: 46px; padding: 0; flex-shrink: 0;
+        border: 1px solid var(--line); border-radius: 50%;
+        background: rgba(234,223,199,.04); color: var(--text);
+        cursor: pointer;
+        transition: border-color .2s var(--ease), background .2s var(--ease), color .2s var(--ease);
+      }
+      .ctrl svg { display: none; }
+      .ctrl svg.i-on { display: block; }
+      .ctrl > svg:not([class*="i-"]) { display: block; }
+      .ctrl.on svg.i-on { display: block; }
+      .ctrl.on svg.i-off { display: none; }
+      .ctrl.off svg.i-on { display: none; }
+      .ctrl.off svg.i-off { display: block; }
+      .ctrl.on { border-color: var(--gold); background: rgba(195,164,123,.16); color: var(--gold-bright); }
+      .ctrl.off { color: var(--muted); }
+      .ctrl:hover { border-color: rgba(195,164,123,.5); }
+      .ctrl.leave { margin-left: auto; width: 46px; height: 46px; padding: 0; border-color: rgba(255,77,109,.45); color: #ff9e8a; }
+      .ctrl.leave:hover { background: rgba(255,77,109,.12); }
+      .ctrl.leave:hover { background: rgba(255,77,109,.12); }
+      .ctrl:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+      .devices { margin-top: 1rem; display: grid; gap: 0.9rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+      .dev { display: flex; flex-direction: column; }
+      .devices select { cursor: pointer; }
+
+      .share-row { display: flex; gap: 0.5rem; margin-top: 1.1rem; align-items: stretch; }
+      .share-link { flex: 1; min-width: 0; padding: 0.8rem 0.9rem; border: 1px solid var(--line); border-radius: 10px; background: rgba(234,223,199,.04); font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .share-copy { flex-shrink: 0; padding: 0.8rem 1.1rem; border: 0; border-radius: 10px; background: var(--gold); color: #1d1a15; font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+      .share-copy:hover { background: var(--gold-bright); }
+      .qr-wrap { margin-top: 1.2rem; display: flex; justify-content: center; }
+      .qr-wrap img { border-radius: 12px; background: #eadfc7; }
+      .copy-msg { margin: 0.6rem 0 0; text-align: center; font-size: 0.8rem; color: var(--gold-bright); }
+
+      .msgs { list-style: none; margin: 1rem 0 0; padding: 0.6rem; max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--line); border-radius: 12px; background: rgba(0,0,0,.18); }
+      .msg-form { margin-top: 0.7rem; display: flex; gap: 0.5rem; }
+      .msg-form .field { flex: 1; }
+      .send { flex-shrink: 0; padding: 0 1.1rem; border: 0; border-radius: 12px; background: var(--gold); color: #1d1a15; font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+      .send:hover { background: var(--gold-bright); }
+
+      .note { margin-top: 1.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--muted); opacity: .8; text-align: center; }
+    </style>
+
+    <style is:global>
+      /* Elementos creados por JS (no llevan el scope de Astro) */
+      #people .person { display: flex; align-items: center; gap: 0.6rem; font-size: 0.95rem; }
+      #people .person .dot { width: 8px; height: 8px; border-radius: 50%; background: #00ff94; box-shadow: 0 0 8px rgba(0,255,148,.5); }
+      #people .person .dot.dim { background: #5b6275; box-shadow: none; }
+      #people .person .pname { color: var(--text); }
+      #people .person.waiting .pname { color: var(--muted); }
+      #people .person .badge { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase; color: #00ff94; }
+      #msgs .msg { font-size: 0.9rem; line-height: 1.4; }
+      #msgs .msg .who { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; letter-spacing: 0.03em; color: var(--gold); }
+      #msgs .msg .who::after { content: ": "; }
+      #msgs .msg .txt { color: var(--text); }
+      #msgs .msg.sys .txt { color: var(--muted); font-style: italic; }
+    </style>
+  </body>
+</html>
