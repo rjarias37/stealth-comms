@@ -418,9 +418,11 @@ const hasCam = tipo === 'meetings';
 
 // Chat (Supabase Realtime)
         import { createClient } from '@supabase/supabase-js';
+        const msgList = document.getElementById('msgs');
+        const msgForm = document.getElementById('msgForm');
         const supabase = createClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
         const salaId = id; // room identifier
-        const nombreUsuario = nombre || 'Anon';
+        const nombreUsuario = nombre;
         // Subscribe to new messages
         supabase
           .channel(`room_${salaId}`)
@@ -438,15 +440,13 @@ const hasCam = tipo === 'meetings';
             x.textContent = msg.content;
             li.appendChild(w);
             li.appendChild(x);
-            list.appendChild(li);
-            list.scrollTop = list.scrollHeight;
+            msgList.appendChild(li);
+            msgList.scrollTop = msgList.scrollHeight;
           })
           .subscribe();
         // Send message
-        const msgForm = document.getElementById('msgForm');
         if (msgForm) {
           const input = document.getElementById('msgInput');
-          const list = document.getElementById('msgs');
           msgForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const t = (input.value || '').trim();
