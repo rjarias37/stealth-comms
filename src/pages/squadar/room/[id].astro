@@ -66,7 +66,12 @@ const hasCam = tipo === 'meetings';
               <h2 class="block-title">Sala de voz</h2>
               <span class="status" id="status">Conectando…</span>
             </div>
-            <ul class="people-list" id="people" aria-live="polite"></ul>
+              <ul class="people-list" id="people" aria-live="polite"></ul>
+              <!-- VIDEO (solo Meetings) -->
+              <div id="videoWrap" hidden>
+                <h3 class="block-sub">Video</h3>
+                <div class="video-grid" id="videoGrid"></div>
+              </div>
             <div class="controls" role="group" aria-label="Controles de la sala">
               <button class="ctrl off" id="mic" type="button" aria-pressed="false" aria-label="Micrófono" title="Micrófono">
                 <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -304,11 +309,18 @@ const hasCam = tipo === 'meetings';
           setStatus('Conectado');
           renderPeople();
 
-          // publicar micro
-          try { await room.localParticipant.setMicrophoneEnabled(true); } catch {}
-          try { await room.startAudio(); } catch {}
-          syncMic();
-          renderPeople();
+// publicar micro automaticamente al entrar (sin depender de Ajustes)
+            try {
+              await room.localParticipant.setMicrophoneEnabled(true);
+            } catch (e) {
+              const msg = e && (e.message || String(e));
+              if (/permission|denied|NotAllowed/i.test(msg)) setStatus('Permiso de micro denegado');
+              else setStatus('Conectado sin micro');
+            }
+            try { await room.startAudio(); } catch {}
+            syncMic();
+            renderPeople();
+            cargarDispositivos();
         } catch (e) {
           console.error(e);
           setStatus('Sin conexión');
@@ -377,8 +389,101 @@ const hasCam = tipo === 'meetings';
         spk.classList.toggle('on', speakerOn);
         spk.classList.toggle('off', !speakerOn);
       });
+      // Contenedores para video (solo Meetings)
+      const videoWrap = document.getElementById('videoWrap');
+      const videoGrid = document.getElementById('videoGrid');
+      function ensureVideoEl(name) {
+        let el = videoGrid ? videoGrid.querySelector(`[data-name="${name}"]`) : null;
+        if (!el) {
+          el = document.createElement('div');
+          el.className = 'video-tile';
+          el.dataset.name = name;
+          const v = document.createElement('video');
+          v.className = 'video-stream';
+          v.autoplay = true;
+          v.muted = true;
+          v.playsInline = true;
+          v.style.width = '100%';
+          v.style.height = '100%';
+          v.style.objectFit = 'cover';
+          const lab = document.createElement('div');
+          lab.className = 'video-label';
+          lab.textContent = name;
+          el.appendChild(v);
+          el.appendChild(lab);
+          if (videoGrid) videoGrid.appendChild(el);
+        }
+        return el;
+      }
+      function attachTrack(track, el) {
+        if (!track) return;
+        try {
+          track.attach(el.querySelector('video'));
+        } catch {}
+      }
+      function detachTrack(track) {
+        if (!track) return;
+        try { track.detach(); } catch {}
+      }
+      // Cámara
+      const camBtn = document.getElementById('cam');
+      let camOn = false;
+      if (camBtn) {
+        camBtn.addEventListener('click', async () => {
+          if (!voiceRoom) return;
+          try {
+            const next = !camOn;
+            await voiceRoom.localParticipant.setCameraEnabled(next);
+            camOn = next;
+            camBtn.setAttribute('aria-pressed', String(camOn));
+            camBtn.classList.toggle('on', camOn);
+            camBtn.classList.toggle('off', !camOn);
+            if (camOn) {
+              const track = voiceRoom.localParticipant.videoTracks.values().next().value;
+              if (track && videoWrap) videoWrap.hidden = false;
+              attachTrack(track, ensureVideoEl('Tú'));
+            } else {
+              const track = voiceRoom.localParticipant.videoTracks.values().next().value;
+              detachTrack(track);
+              const tile = videoGrid ? videoGrid.querySelector('[data-name="Tú"]') : null;
+              if (tile) tile.remove();
+            }
+          } catch (e) {
+            console.error('Cámara falló:', e);
+          }
+        });
+      }
+      // Pantalla
+      const screenBtn = document.getElementById('screen');
+      let screenOn = false;
+      if (screenBtn) {
+        screenBtn.addEventListener('click', async () => {
+          if (!voiceRoom) return;
+          try {
+            const next = !screenOn;
+            await voiceRoom.localParticipant.setScreenShareEnabled(next);
+            screenOn = next;
+            screenBtn.setAttribute('aria-pressed', String(screenOn));
+            screenBtn.classList.toggle('on', screenOn);
+            screenBtn.classList.toggle('off', !screenOn);
+            if (screenOn) {
+              const track = voiceRoom.localParticipant.screenShareTracks.values().next().value;
+              if (track && videoWrap) videoWrap.hidden = false;
+              attachTrack(track, ensureVideoEl('Pantalla'));
+            } else {
+              const track = voiceRoom.localParticipant.screenShareTracks.values().next().value;
+              detachTrack(track);
+              const tile = videoGrid ? videoGrid.querySelector('[data-name="Pantalla"]') : null;
+              if (tile) tile.remove();
+            }
+          } catch (e) {
+            console.error('Pantalla falló:', e);
+          }
+        });
+      }
+      // Excluir de loop genérico
       document.querySelectorAll('.ctrl').forEach((b) => {
-        if (b.id === 'mic' || b.id === 'spk' || b.id === 'leave') return;
+        if (b.id === 'mic' || b.id === 'spk' || b.id === 'cam' || b.id === 'screen' || b.id === 'leave') return;
         b.addEventListener('click', () => {
           const on = b.getAttribute('aria-pressed') === 'true';
           b.setAttribute('aria-pressed', String(!on));
@@ -397,22 +502,22 @@ const hasCam = tipo === 'meetings';
       const ajustesBtn = document.getElementById('ajustes');
       const micSel = document.getElementById('micSel');
       const outSel = document.getElementById('outSel');
-      async function loadDevices() {
-        try {
-          const list = await navigator.mediaDevices.enumerateDevices();
-          const mics = list.filter((d) => d.kind === 'audioinput');
-          const outs = list.filter((d) => d.kind === 'audiooutput');
-          micSel.replaceChildren(...mics.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Micrófono ' + (i + 1); return o; }));
-          outSel.replaceChildren(...outs.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Salida ' + (i + 1); return o; }));
-        } catch {}
-      }
-      if (ajustesBtn) ajustesBtn.addEventListener('click', async () => {
-        const open = devicesEl.hidden;
-        devicesEl.hidden = !open;
-        ajustesBtn.setAttribute('aria-expanded', String(open));
-        ajustesBtn.classList.toggle('on', open);
-        if (open) await loadDevices();
-      });
+async function cargarDispositivos() {
+          try {
+            const list = await navigator.mediaDevices.enumerateDevices();
+            const mics = list.filter((d) => d.kind === 'audioinput');
+            const outs = list.filter((d) => d.kind === 'audiooutput');
+            micSel.replaceChildren(...mics.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Micrófono ' + (i + 1); return o; }));
+            outSel.replaceChildren(...outs.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Salida ' + (i + 1); return o; }));
+          } catch {}
+        }
+if (ajustesBtn) ajustesBtn.addEventListener('click', async () => {
+          const open = devicesEl.hidden;
+          devicesEl.hidden = !open;
+          ajustesBtn.setAttribute('aria-expanded', String(open));
+          ajustesBtn.classList.toggle('on', open);
+          if (open) await cargarDispositivos();
+        });
       if (micSel) micSel.addEventListener('change', async () => { try { if (voiceRoom) await voiceRoom.switchActiveDevice('audioinput', micSel.value); } catch {} });
       if (outSel) outSel.addEventListener('change', async () => { try { if (voiceRoom) await voiceRoom.switchActiveDevice('audiooutput', outSel.value); } catch {} });
 
@@ -423,6 +528,37 @@ const hasCam = tipo === 'meetings';
         const supabase = createClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
         const salaId = id; // room identifier
         const nombreUsuario = nombre;
+        // Cargar historial antes de suscribirse (Realtime no envia cambios pasados)
+        async function loadHistory() {
+          if (!msgList) return;
+          try {
+            const { data } = await supabase
+              .from('messages')
+              .select('*')
+              .eq('room_id', salaId)
+              .order('created_at', { ascending: true })
+              .limit(200);
+            if (data) {
+              data.forEach(msg => {
+                const li = document.createElement('li');
+                li.className = 'msg';
+                const w = document.createElement('span');
+                w.className = 'who';
+                w.textContent = msg.username;
+                w.style.color = colorFor(msg.username);
+                const x = document.createElement('span');
+                x.className = 'txt';
+                x.textContent = msg.content;
+                li.appendChild(w);
+                li.appendChild(x);
+                msgList.appendChild(li);
+              });
+              msgList.scrollTop = msgList.scrollHeight;
+            }
+          } catch (e) {
+            console.error('loadHistory fallo:', e);
+          }
+        }
         // Defensa en profundidad: recorta y descarta payloads sospechosos
         function sanear(t) {
           const limpio = String(t || '').replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 500);
@@ -453,6 +589,7 @@ const hasCam = tipo === 'meetings';
             msgList.scrollTop = msgList.scrollHeight;
           })
           .subscribe();
+        loadHistory();
         // Send message
         if (msgForm) {
           const input = document.getElementById('msgInput');
@@ -500,6 +637,11 @@ const hasCam = tipo === 'meetings';
       .field { width: 100%; padding: 0.95rem 1.1rem; background: rgba(234,223,199,.05); border: 1px solid var(--line); border-radius: 12px; color: var(--text); font-family: 'Inter', system-ui, sans-serif; font-size: 1rem; outline: none; }
       .field::placeholder { color: rgba(197,183,158,.5); }
       .field:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(195,164,123,.18); }
+        select.field { cursor: pointer; appearance: none; padding-right: 2.2rem;
+          background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c3a47b' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");
+          background-repeat: no-repeat; background-position: right 0.8rem center; background-size: 14px; }
+        select.field option { background: #1d1a15; color: var(--text); }
+        select.field:hover { border-color: rgba(195,164,123,.5); }
       .cta { margin-top: 0.4rem; padding: 1.05rem 1.6rem; background: var(--gold); color: #1d1a15; border: 0; border-radius: 999px; font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 1rem; cursor: pointer; transition: background .25s var(--ease), transform .15s var(--ease); }
       .cta:hover { background: var(--gold-bright); transform: translateY(-1px); }
       .err { margin: 0; color: #ff9e8a; font-size: 0.85rem; }
@@ -512,7 +654,11 @@ const hasCam = tipo === 'meetings';
       .status { font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
       .sub { margin-top: 0.3rem; color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
 
-      .people-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+        .people-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+        .block-sub { margin: 1.2rem 0 0; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.6rem; margin-top: 0.6rem; }
+        .video-tile { position: relative; aspect-ratio: 4 / 3; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(0,0,0,.4); }
+        .video-label { position: absolute; left: 0.5rem; bottom: 0.4rem; padding: 0.15rem 0.45rem; border-radius: 6px; background: rgba(0,0,0,.55); font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text); }
       .controls { margin-top: 1.2rem; display: flex; align-items: center; justify-content: center; gap: 0.6rem; }
       .ctrl {
         display: inline-flex; align-items: center; justify-content: center;
