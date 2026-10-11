@@ -28,3 +28,9 @@ pnpm-debug.log*
 
 .vercel
 .env*
+
+# agent tooling artifacts (installed by npx skills)
+.agents/
+.claude/
+agent/
+skills-lock.json
