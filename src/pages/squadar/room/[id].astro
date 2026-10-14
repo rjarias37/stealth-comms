@@ -162,6 +162,7 @@ const hasCam = tipo === 'meetings';
                 <select class="field" id="outSel"></select>
               </div>
             </div>
+            <p class="screen-msg" id="screenMsg" role="status" hidden></p>
           </section>
 
           <!-- COMPARTIR -->
@@ -287,22 +288,44 @@ const hasCam = tipo === 'meetings';
           const room = new Room({ adaptiveStream: true, dynacast: true });
           voiceRoom = room;
 
-          room.on(RoomEvent.TrackSubscribed, (track) => {
+          room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
             if (track.kind === Track.Kind.Audio) {
               const el = track.attach();
               el.muted = !speakerOn;
               document.body.appendChild(el);
               audioEls.set(track.sid, el);
+              return;
+            }
+            if (track.kind === Track.Kind.Video) {
+              addVideo(track, participant);
+              return;
             }
           });
-          room.on(RoomEvent.TrackUnsubscribed, (track) => {
+          room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
             track.detach().forEach((e) => e.remove());
             audioEls.delete(track.sid);
+            removeVideo(track, participant);
+          });
+          room.on(RoomEvent.ParticipantDisconnected, (p) => {
+            if (videoGrid) {
+              Array.from(videoGrid.children).forEach((t) => {
+                if (t.dataset.key.endsWith(p.identity || '@@')) t.remove();
+              });
+              layoutVideo();
+            }
+            renderPeople();
           });
           room.on(RoomEvent.ParticipantConnected, renderPeople);
           room.on(RoomEvent.ParticipantDisconnected, renderPeople);
           room.on(RoomEvent.ActiveSpeakersChanged, renderPeople);
-          room.on(RoomEvent.LocalTrackPublished, renderPeople);
+          room.on(RoomEvent.LocalTrackPublished, (pub) => {
+            if (pub.track && pub.track.kind === Track.Kind.Video) addVideo(pub.track, room.localParticipant);
+            renderPeople();
+          });
+          room.on(RoomEvent.LocalTrackUnpublished, (pub) => {
+            if (pub.track && pub.track.kind === Track.Kind.Video) removeVideo(pub.track, room.localParticipant);
+            renderPeople();
+          });
           room.on(RoomEvent.Disconnected, () => { setStatus('Desconectado'); voiceRoom = null; renderPeople(); });
 
           await room.connect(data.url, data.token);
@@ -389,41 +412,83 @@ const hasCam = tipo === 'meetings';
         spk.classList.toggle('on', speakerOn);
         spk.classList.toggle('off', !speakerOn);
       });
-      // Contenedores para video (solo Meetings)
+            // ================= VIDEO (solo Meetings) =================
       const videoWrap = document.getElementById('videoWrap');
       const videoGrid = document.getElementById('videoGrid');
-      function ensureVideoEl(name) {
-        let el = videoGrid ? videoGrid.querySelector(`[data-name="${name}"]`) : null;
+      let screenOn = false;
+
+      function isScreen(track) {
+        return track && (track.source === Track.Source.ScreenShare);
+      }
+      function tileKey(track, participant) {
+        const who = (participant && (participant.identity || participant.name)) || 'alguien';
+        return isScreen(track) ? 'screen-' + who : 'cam-' + who;
+      }
+      function tileLabel(track, participant) {
+        const who = (participant && (participant.identity || participant.name)) || 'alguien';
+        const me = participant && participant.isLocal;
+        return isScreen(track) ? 'Pantalla de ' + who : (me ? 'Tú' : who);
+      }
+      function ensureTile(track, participant) {
+        const key = tileKey(track, participant);
+        let el = videoGrid ? videoGrid.querySelector(`[data-key="${key}"]`) : null;
         if (!el) {
           el = document.createElement('div');
           el.className = 'video-tile';
-          el.dataset.name = name;
+          el.dataset.key = key;
           const v = document.createElement('video');
           v.className = 'video-stream';
-          v.autoplay = true;
+          v.setAttribute('autoplay', '');
+          v.setAttribute('playsinline', '');
           v.muted = true;
-          v.playsInline = true;
-          v.style.width = '100%';
-          v.style.height = '100%';
-          v.style.objectFit = 'cover';
           const lab = document.createElement('div');
           lab.className = 'video-label';
-          lab.textContent = name;
+          lab.textContent = tileLabel(track, participant);
           el.appendChild(v);
           el.appendChild(lab);
           if (videoGrid) videoGrid.appendChild(el);
         }
         return el;
       }
-      function attachTrack(track, el) {
-        if (!track) return;
+      function layoutVideo() {
+        if (!videoGrid || !videoWrap) return;
+        const tiles = Array.from(videoGrid.children);
+        const screens = tiles.filter((t) => t.dataset.key.startsWith('screen-'));
+        const cams = tiles.filter((t) => t.dataset.key.startsWith('cam-'));
+        videoWrap.hidden = tiles.length === 0;
+        videoGrid.classList.toggle('has-screen', screens.length > 0);
+        screens.forEach((t) => t.classList.add('tile-screen'));
+        cams.forEach((t) => t.classList.remove('tile-screen'));
+        if (screens.length > 0) {
+          videoGrid.dataset.mode = 'share';
+        } else if (cams.length <= 3) {
+          videoGrid.dataset.mode = 'inline';
+        } else {
+          videoGrid.dataset.mode = 'grid';
+        }
+      }
+      function addVideo(track, participant) {
+        if (!track || track.kind !== Track.Kind.Video) return;
+        const el = ensureTile(track, participant);
         try {
           track.attach(el.querySelector('video'));
+          // Remove intrinsic width/height that LiveKit may set; rely on CSS
+          const vid = el.querySelector('video');
+          if (vid) {
+            vid.removeAttribute('width');
+            vid.removeAttribute('height');
+            vid.style.width = '100%';
+            vid.style.height = '100%';
+          }
         } catch {}
+        layoutVideo();
       }
-      function detachTrack(track) {
-        if (!track) return;
+      function removeVideo(track, participant) {
+        const key = tileKey(track, participant);
+        const el = videoGrid ? videoGrid.querySelector(`[data-key="${key}"]`) : null;
+        if (el) el.remove();
         try { track.detach(); } catch {}
+        layoutVideo();
       }
       // Cámara
       const camBtn = document.getElementById('cam');
@@ -438,27 +503,36 @@ const hasCam = tipo === 'meetings';
             camBtn.setAttribute('aria-pressed', String(camOn));
             camBtn.classList.toggle('on', camOn);
             camBtn.classList.toggle('off', !camOn);
-            if (camOn) {
-              const track = voiceRoom.localParticipant.videoTracks.values().next().value;
-              if (track && videoWrap) videoWrap.hidden = false;
-              attachTrack(track, ensureVideoEl('Tú'));
-            } else {
-              const track = voiceRoom.localParticipant.videoTracks.values().next().value;
-              detachTrack(track);
-              const tile = videoGrid ? videoGrid.querySelector('[data-name="Tú"]') : null;
-              if (tile) tile.remove();
-            }
           } catch (e) {
-            console.error('Cámara falló:', e);
+            console.error('Camara fallo:', e);
           }
         });
       }
-      // Pantalla
+      // Pantalla (maximo 1 por sala)
       const screenBtn = document.getElementById('screen');
-      let screenOn = false;
+      const screenMsg = document.getElementById('screenMsg');
+      function hayOtroCompartiendo() {
+        let hay = false;
+        if (voiceRoom) {
+          voiceRoom.remoteParticipants.forEach((p) => {
+            p.videoTracks.forEach((pub) => { if (isScreen(pub.track)) hay = true; });
+          });
+        }
+        return hay;
+      }
+      function avisoPantalla(txt) {
+        if (!screenMsg) return;
+        screenMsg.textContent = txt;
+        screenMsg.hidden = !txt;
+        if (txt) setTimeout(() => { screenMsg.hidden = true; }, 4000);
+      }
       if (screenBtn) {
         screenBtn.addEventListener('click', async () => {
           if (!voiceRoom) return;
+          if (!screenOn && hayOtroCompartiendo()) {
+            avisoPantalla('Ya hay alguien compartiendo pantalla');
+            return;
+          }
           try {
             const next = !screenOn;
             await voiceRoom.localParticipant.setScreenShareEnabled(next);
@@ -466,18 +540,8 @@ const hasCam = tipo === 'meetings';
             screenBtn.setAttribute('aria-pressed', String(screenOn));
             screenBtn.classList.toggle('on', screenOn);
             screenBtn.classList.toggle('off', !screenOn);
-            if (screenOn) {
-              const track = voiceRoom.localParticipant.screenShareTracks.values().next().value;
-              if (track && videoWrap) videoWrap.hidden = false;
-              attachTrack(track, ensureVideoEl('Pantalla'));
-            } else {
-              const track = voiceRoom.localParticipant.screenShareTracks.values().next().value;
-              detachTrack(track);
-              const tile = videoGrid ? videoGrid.querySelector('[data-name="Pantalla"]') : null;
-              if (tile) tile.remove();
-            }
           } catch (e) {
-            console.error('Pantalla falló:', e);
+            console.error('Pantalla fallo:', e);
           }
         });
       }
@@ -656,8 +720,15 @@ if (ajustesBtn) ajustesBtn.addEventListener('click', async () => {
 
         .people-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
         .block-sub { margin: 1.2rem 0 0; font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
-        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.6rem; margin-top: 0.6rem; }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.55rem; margin-top: 0.6rem; }
+        .video-grid[data-mode="grid"] { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+        .video-grid[data-mode="inline"] .video-tile { aspect-ratio: 4 / 3; }
         .video-tile { position: relative; aspect-ratio: 4 / 3; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: rgba(0,0,0,.4); }
+        .video-tile.tile-screen { grid-column: 1 / -1; aspect-ratio: 16 / 9; }
+        .video-stream { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .video-tile.tile-screen .video-stream { object-fit: contain; background: #000; }
+        .video-label { position: absolute; left: 0.5rem; bottom: 0.4rem; padding: 0.15rem 0.45rem; border-radius: 6px; background: rgba(0,0,0,.55); font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text); }
+        .screen-msg { margin: 0.6rem 0 0; font-size: 0.78rem; color: var(--gold-bright); }
         .video-label { position: absolute; left: 0.5rem; bottom: 0.4rem; padding: 0.15rem 0.45rem; border-radius: 6px; background: rgba(0,0,0,.55); font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; color: var(--text); }
       .controls { margin-top: 1.2rem; display: flex; align-items: center; justify-content: center; gap: 0.6rem; }
       .ctrl {
