@@ -72,6 +72,11 @@ const hasCam = tipo === 'meetings';
                 <h3 class="block-sub">Video</h3>
                 <div class="video-grid" id="videoGrid"></div>
               </div>
+            <div class="conn-error" id="connError" role="alert" hidden>
+              <p class="conn-title">No se pudo conectar a la sala de voz</p>
+              <p class="conn-detail" id="connDetail"></p>
+              <button class="conn-retry" id="connRetry" type="button">Reintentar</button>
+            </div>
             <div class="controls" role="group" aria-label="Controles de la sala">
               <button class="ctrl off" id="mic" type="button" aria-pressed="false" aria-label="Micrófono" title="Micrófono">
                 <svg class="i-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -195,7 +200,7 @@ const hasCam = tipo === 'meetings';
             )
           }
 
-          <p class="note">Voz: conexión real con LiveKit. Texto: pendiente (backend 2).</p>
+          <p class="note">Voz en directo con LiveKit. Los mensajes se borran solos a las 24 h.</p>
         </div>
       </main>
     </div>
@@ -219,6 +224,9 @@ const hasCam = tipo === 'meetings';
       const qr = document.getElementById('qr');
       const copyBtn = document.getElementById('copyBtn');
       const copyMsg = document.getElementById('copyMsg');
+      const connError = document.getElementById('connError');
+      const connDetail = document.getElementById('connDetail');
+      const connRetry = document.getElementById('connRetry');
 
       const PALETA = ['#dbc39c', '#9ec6a6', '#e0a08a', '#b7b3e0', '#e6a6c8', '#c7d17e', '#e8c86a', '#8fd0cf'];
       function colorFor(name) {
@@ -274,7 +282,35 @@ const hasCam = tipo === 'meetings';
         peopleEl.replaceChildren(frag);
       }
 
+      let conectando = false;
+      let saliendo = false;
+
+      function controlesDisponibles(ok) {
+        document.querySelectorAll('.ctrl').forEach((b) => {
+          if (b.id === 'leave') return;
+          b.disabled = !ok;
+        });
+      }
+
+      function falloConexion(motivo) {
+        setStatus('Sin conexión');
+        voiceRoom = null;
+        controlesDisponibles(false);
+        if (connDetail) connDetail.textContent = motivo || '';
+        if (connError) connError.hidden = false;
+        renderPeople();
+      }
+
+      function conexionOk() {
+        controlesDisponibles(true);
+        if (connError) connError.hidden = true;
+        if (connDetail) connDetail.textContent = '';
+      }
+
       async function connectVoice() {
+        if (conectando) return;
+        conectando = true;
+        if (connRetry) connRetry.disabled = true;
         setStatus('Conectando…');
         try {
           const res = await fetch('/api/livekit/token', {
@@ -283,7 +319,10 @@ const hasCam = tipo === 'meetings';
             body: JSON.stringify({ room: id, name: nombre || 'Invitado' }),
           });
           const data = await res.json();
-          if (!res.ok) { setStatus('Sin conexión: ' + (data.error || res.status)); return; }
+          if (!res.ok) {
+            falloConexion('El servidor no entregó el acceso a la sala (' + (data.error || res.status) + ').');
+            return;
+          }
 
           const room = new Room({ adaptiveStream: true, dynacast: true });
           voiceRoom = room;
@@ -326,10 +365,15 @@ const hasCam = tipo === 'meetings';
             if (pub.track && pub.track.kind === Track.Kind.Video) removeVideo(pub.track, room.localParticipant);
             renderPeople();
           });
-          room.on(RoomEvent.Disconnected, () => { setStatus('Desconectado'); voiceRoom = null; renderPeople(); });
+          room.on(RoomEvent.Disconnected, () => {
+            if (voiceRoom !== room) return;
+            if (saliendo) { setStatus('Desconectado'); voiceRoom = null; renderPeople(); return; }
+            falloConexion('Se perdió la conexión con la sala de voz.');
+          });
 
           await room.connect(data.url, data.token);
           setStatus('Conectado');
+          conexionOk();
           renderPeople();
 
 // publicar micro automaticamente al entrar (sin depender de Ajustes)
@@ -346,7 +390,22 @@ const hasCam = tipo === 'meetings';
             cargarDispositivos();
         } catch (e) {
           console.error(e);
-          setStatus('Sin conexión');
+          const msg = String((e && (e.message || e)) || '');
+          const code = (e && (e.status || e.code)) || 0;
+          if (code === 429 || /429|too many requests/i.test(msg)) {
+            falloConexion('LiveKit rechazó la conexión (429): se alcanzó un límite del plan o hubo demasiados intentos seguidos. Espera un minuto y pulsa Reintentar.');
+          } else if (/permission|denied|notallowed/i.test(msg)) {
+            falloConexion('El navegador bloqueó el micrófono. Revisa los permisos del sitio.');
+          } else if (/timeout|timed out/i.test(msg)) {
+            falloConexion('El servidor de voz no respondió a tiempo.');
+          } else if (/signal connection|connection establishment|websocket/i.test(msg)) {
+            falloConexion('No se pudo abrir el canal con el servidor de voz. Si se repite tras esperar un minuto, revisa el cupo del plan de LiveKit (error 429).');
+          } else {
+            falloConexion(msg ? 'Detalle: ' + msg.slice(0, 180) : 'No se pudo alcanzar el servidor de voz.');
+          }
+        } finally {
+          conectando = false;
+          if (connRetry) connRetry.disabled = false;
         }
       }
 
@@ -374,6 +433,7 @@ const hasCam = tipo === 'meetings';
           .then((url) => { qr.src = url; })
           .catch(() => {});
         renderPeople();
+        controlesDisponibles(false);
         connectVoice();
       }
       function showRoom() { gate.hidden = true; sala.hidden = false; initRoom(); }
@@ -401,8 +461,22 @@ const hasCam = tipo === 'meetings';
       if (mic) mic.addEventListener('click', async () => {
         if (!voiceRoom) return;
         const next = !micOn();
-        try { await voiceRoom.localParticipant.setMicrophoneEnabled(next); } catch {}
-        syncMic();
+        try {
+          await voiceRoom.localParticipant.setMicrophoneEnabled(next);
+          syncMic();
+          // Si activas el micrófono, asegúrate de que el botón no quede bloqueado
+          mic.disabled = false;
+        } catch (err) {
+          mic.disabled = false;
+          const name = err && err.name;
+          if (name === 'NotAllowedError') {
+            avisoDispositivo('Permiso denegado: habilita micrófono en tu navegador');
+          } else if (name === 'NotFoundError') {
+            avisoDispositivo('No se encontró micrófono');
+          } else {
+            avisoDispositivo('No se pudo habilitar el micrófono');
+          }
+        }
       });
       const spk = document.getElementById('spk');
       if (spk) spk.addEventListener('click', () => {
@@ -496,16 +570,26 @@ const hasCam = tipo === 'meetings';
       if (camBtn) {
         camBtn.addEventListener('click', async () => {
           if (!voiceRoom) return;
-          try {
-            const next = !camOn;
-            await voiceRoom.localParticipant.setCameraEnabled(next);
-            camOn = next;
-            camBtn.setAttribute('aria-pressed', String(camOn));
-            camBtn.classList.toggle('on', camOn);
-            camBtn.classList.toggle('off', !camOn);
-          } catch (e) {
-            console.error('Camara fallo:', e);
-          }
+           try {
+             const next = !camOn;
+             await voiceRoom.localParticipant.setCameraEnabled(next);
+             camOn = next;
+             camBtn.setAttribute('aria-pressed', String(camOn));
+             camBtn.classList.toggle('on', camOn);
+             camBtn.classList.toggle('off', !camOn);
+             camBtn.disabled = false;
+           } catch (err) {
+             camBtn.disabled = false;
+             const name = err && err.name;
+             if (name === 'NotAllowedError') {
+               avisoDispositivo('Permiso denegado: habilita cámara en tu navegador');
+             } else if (name === 'NotFoundError') {
+               avisoDispositivo('No se encontró cámara');
+             } else {
+               avisoDispositivo('No se pudo habilitar la cámara');
+             }
+           }
+
         });
       }
       // Pantalla (maximo 1 por sala)
@@ -520,12 +604,17 @@ const hasCam = tipo === 'meetings';
         }
         return hay;
       }
-      function avisoPantalla(txt) {
-        if (!screenMsg) return;
-        screenMsg.textContent = txt;
-        screenMsg.hidden = !txt;
-        if (txt) setTimeout(() => { screenMsg.hidden = true; }, 4000);
-      }
+       function avisoPantalla(txt) {
+         if (!screenMsg) return;
+         screenMsg.textContent = txt;
+         screenMsg.hidden = !txt;
+         if (txt) setTimeout(() => { screenMsg.hidden = true; }, 4000);
+       }
+
+       function avisoDispositivo(txt) {
+         // Misma UI reutilizada que ya existía para pantalla
+         avisoPantalla(txt);
+       }
       if (screenBtn) {
         screenBtn.addEventListener('click', async () => {
           if (!voiceRoom) return;
@@ -541,8 +630,16 @@ const hasCam = tipo === 'meetings';
             screenBtn.classList.toggle('on', screenOn);
             screenBtn.classList.toggle('off', !screenOn);
           } catch (e) {
-            console.error('Pantalla fallo:', e);
-          }
+             console.error('Pantalla fallo:', e);
+             const name = e && e.name;
+             if (name === 'NotAllowedError') {
+               avisoPantalla('Permiso denegado: habilita compartir pantalla en tu navegador');
+             } else if (name === 'NotFoundError') {
+               avisoPantalla('No se encontró pantalla para compartir');
+             } else {
+               avisoPantalla('No se pudo compartir pantalla');
+             }
+           }
         });
       }
       // Excluir de loop genérico
@@ -557,8 +654,14 @@ const hasCam = tipo === 'meetings';
       });
       const leave = document.getElementById('leave');
       if (leave) leave.addEventListener('click', () => {
+        saliendo = true;
         try { if (voiceRoom) voiceRoom.disconnect(); } catch {}
         window.location.href = '/squadar';
+      });
+      if (connRetry) connRetry.addEventListener('click', () => {
+        if (conectando) return;
+        if (connError) connError.hidden = true;
+        connectVoice();
       });
 
       // Ajustes de dispositivos
@@ -772,6 +875,14 @@ if (ajustesBtn) ajustesBtn.addEventListener('click', async () => {
       .send:hover { background: var(--gold-bright); }
 
       .note { margin-top: 1.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--muted); opacity: .8; text-align: center; }
+.conn-error { margin: 1rem 0 0; padding: .9rem 1rem; display: flex; flex-direction: column; gap: .55rem; border: 1px solid rgba(255,77,109,.45); background: rgba(255,77,109,.08); border-radius: 10px; }
+.conn-error[hidden] { display: none; }
+.conn-title { margin: 0; font-size: .88rem; color: #ff9e8a; }
+.conn-detail { margin: 0; font-size: .78rem; line-height: 1.45; color: var(--muted); }
+.conn-retry { align-self: flex-start; padding: .45rem .9rem; border: 1px solid rgba(195,164,123,.5); background: transparent; color: var(--gold-bright); border-radius: 8px; font: inherit; font-size: .78rem; cursor: pointer; }
+.conn-retry:hover { background: rgba(195,164,123,.12); }
+.conn-retry:disabled { opacity: .45; cursor: progress; }
+.ctrl[disabled] { opacity: .38; cursor: not-allowed; }
     </style>
 
     <style is:global>
